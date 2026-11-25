@@ -245,11 +245,11 @@ export class NumberBar {
     return this.usable / this.half;
   }
   get baseline() {
-    return this.h - 96; // room below for N's label and the try dots
+    return this.h - 48; // room below for N's label
   }
-  /** Tallest the wave rises: about half the room above the baseline. */
+  /** Tallest the wave rises: it keeps to the lower part of the screen. */
   get maxH() {
-    return Math.max(40, Math.min(this.baseline * 0.55, this.baseline - 2 * BALL_R - FLOAT - 12));
+    return Math.max(40, Math.min(this.h * 0.4, this.baseline - 2 * BALL_R - FLOAT - 12));
   }
   get sparkCount() {
     return clamp(Math.round(this.w / SPARK_DENSITY), 20, 50);

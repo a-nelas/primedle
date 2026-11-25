@@ -127,12 +127,10 @@ body { touch-action: none; }
 
 .tries {
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 22px;
+  left: 22px;
+  top: 22px;
   z-index: 2;
   display: flex;
-  justify-content: center;
   gap: 12px;
   pointer-events: none;
 }

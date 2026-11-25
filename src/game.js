@@ -10,8 +10,13 @@ import { NumberBar } from './bar.js';
 const STATE_KEY = 'primedle:state';
 const STATS_KEY = 'primedle:stats';
 
+// Testing: nothing is saved or loaded, so a reload starts today's game over.
+// Set back to true for launch.
+const SAVE = false;
+
 const store = {
   get(k, fallback) {
+    if (!SAVE) return fallback;
     try {
       const v = localStorage.getItem(k);
       return v ? JSON.parse(v) : fallback;
@@ -20,6 +25,7 @@ const store = {
     }
   },
   set(k, v) {
+    if (!SAVE) return;
     try {
       localStorage.setItem(k, JSON.stringify(v));
     } catch {
