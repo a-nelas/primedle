@@ -14,6 +14,16 @@ export function levelFor(d) {
   return LEVELS.find((l) => d <= l.max);
 }
 
+/**
+ * The hint colour for a drop d away from the nearest correct prime: a fade
+ * from neon green (spot on) through yellow and orange to red (12 or more off).
+ */
+export function hintColor(d) {
+  const t = Math.min(1, Math.max(0, d) / 12);
+  const hue = Math.round(130 * (1 - Math.sqrt(t)));
+  return `hsl(${hue}, 100%, ${d === 0 ? 58 : 60}%)`;
+}
+
 export function trend(prevD, d) {
   if (d < prevD) return 'warmer';
   if (d > prevD) return 'colder';

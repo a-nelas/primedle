@@ -1,6 +1,6 @@
 import { closestPrimes } from './primes.js';
 import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
-import { MAX_TRIES, levelFor } from './hints.js';
+import { MAX_TRIES, hintColor } from './hints.js';
 import { NumberBar } from './bar.js';
 
 // Game-only build: just the number bar, the readout and the try dots.
@@ -94,15 +94,16 @@ function finish(won) {
 function render() {
   const over = state.status !== 'playing';
   const g = state.guesses;
+  // the drops are the only hints: each coloured from red (far) to green (spot on)
   bar.set({
-    markers: g.map((x) => ({ value: x.value, kind: levelFor(x.d).id })),
-    answers: over ? targets : [],
-    showPrimes: over,
+    markers: g.map((x) => ({ value: x.value, color: hintColor(x.d) })),
     enabled: !over,
   });
   $('tries').innerHTML = Array.from({ length: MAX_TRIES }, (_, i) => {
     const x = g[i];
-    return x ? `<span class="try used ${levelFor(x.d).id}"></span>` : '<span class="try"></span>';
+    if (!x) return '<span class="try"></span>';
+    const c = hintColor(x.d);
+    return `<span class="try used" style="background:${c};box-shadow:0 0 10px ${c}"></span>`;
   }).join('');
   $('tries').setAttribute('aria-label', `${g.length} of ${MAX_TRIES} tries used`);
 }

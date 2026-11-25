@@ -1,7 +1,5 @@
-import { isPrime } from './primes.js';
-
 const PAD = 22; // px kept free at each end
-const BALL_R = 14;
+const BALL_R = 18;
 const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
 const CLEAR = 26; // gap between the floor (a straight invisible line) and the highest crest
 const BEND = 9; // px the floor gives way under the ball when it's pulled further down
@@ -101,8 +99,6 @@ export class NumberBar {
     this.mode = 'idle'; // idle | key | drop
     this.enabled = true;
     this.markers = []; // { value, kind }
-    this.answers = [];
-    this.showPrimes = false;
     this.nodes = new Map(); // unit -> { h, v }
     this.sparks = [];
     this.spawnAcc = 0;
@@ -111,7 +107,6 @@ export class NumberBar {
     this.last = 0;
     this.hovered = undefined;
 
-    this.readColors();
     new ResizeObserver(() => this.resize()).observe(canvas);
     document.fonts?.load(`24px ${CRT_FONT}`).then(() => this.buildSprites()).catch(() => {});
     window.addEventListener('resize', () => this.resizeFx());
@@ -132,14 +127,9 @@ export class NumberBar {
     this.resize();
   }
 
-  set({ markers, answers, showPrimes, enabled }) {
+  set({ markers, enabled }) {
     if (markers) this.markers = markers;
-    if (answers) this.answers = answers;
-    if (showPrimes !== undefined) this.showPrimes = showPrimes;
     if (enabled !== undefined) this.enabled = enabled;
-    let far = 0;
-    for (const a of this.answers) far = Math.max(far, Math.abs(a - this.center));
-    this.restHalf = this.answers.length ? Math.max(BASE_HALF + 2, Math.ceil(far * 1.5) + 3) : BASE_HALF;
     if (!this.enabled && this.mode !== 'drop') {
       // game over: settle the view back on N with a flat wave
       this.engaged = false;
@@ -156,18 +146,6 @@ export class NumberBar {
     this.fx.height = Math.round(window.innerHeight * dpr);
     this.fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.kick();
-  }
-
-  readColors() {
-    const s = getComputedStyle(document.documentElement);
-    const g = (n, fb) => s.getPropertyValue(n).trim() || fb;
-    this.colors = {
-      correct: g('--correct', '#3dff9a'),
-      hot: g('--hot', '#ff3d6e'),
-      warm: g('--warm', '#ff9a3d'),
-      cool: g('--cool', '#ffe45c'),
-      cold: g('--cold', '#3dc8ff'),
-    };
   }
 
   resize() {
@@ -269,7 +247,6 @@ export class NumberBar {
     return Math.max(1.6, 46 / this.ppu);
   }
   restFor(n) {
-    if (this.showPrimes && n !== 0 && isPrime(this.center + n)) return this.maxH * 0.32;
     return this.maxH * 0.14;
   }
   xOf(u) {
@@ -703,7 +680,7 @@ export class NumberBar {
   // ---- drawing -----------------------------------------------------------
 
   draw() {
-    const { ctx, w, h, colors: c } = this;
+    const { ctx, w, h } = this;
     if (!w || !h) return;
     ctx.clearRect(0, 0, w, h);
 
@@ -714,8 +691,6 @@ export class NumberBar {
     const fade = (x) => clamp((Math.min(x, w - x) - 2) / 28, 0, 1);
     const showBall = this.showBall;
     const bx = this.ballX();
-    const markerAt = new Map(this.markers.map((m) => [m.value - this.center, m]));
-    const answerSet = new Set(this.answers.map((a) => a - this.center));
 
     // glow behind the crest
     if (showBall && this.lift > 0.01) {
@@ -726,8 +701,8 @@ export class NumberBar {
       ctx.translate(bx, gy);
       ctx.scale(1.5, 1);
       const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
-      rg.addColorStop(0, `rgba(255, 60, 190, ${0.28 * this.lift * this.prox})`);
-      rg.addColorStop(1, 'rgba(255, 60, 190, 0)');
+      rg.addColorStop(0, `rgba(200, 70, 255, ${0.28 * this.lift * this.prox})`);
+      rg.addColorStop(1, 'rgba(200, 70, 255, 0)');
       ctx.fillStyle = rg;
       ctx.fillRect(-ry, -ry, ry * 2, ry * 2);
       ctx.restore();
@@ -757,15 +732,15 @@ export class NumberBar {
       return g;
     };
     const core = ctx.createLinearGradient(0, 0, w, 0);
-    core.addColorStop(0, 'rgba(255, 47, 180, 0)');
-    core.addColorStop(Math.max(0, p - 0.34), 'rgba(255, 47, 180, 0)');
-    core.addColorStop(Math.max(0, p - 0.2), 'rgba(255, 47, 180, 0.22)');
-    core.addColorStop(Math.max(0, p - 0.08), 'rgba(255, 79, 195, 0.85)');
-    core.addColorStop(p, '#ff9ddf');
-    core.addColorStop(Math.min(1, p + 0.08), 'rgba(255, 79, 195, 0.85)');
-    core.addColorStop(Math.min(1, p + 0.2), 'rgba(255, 47, 180, 0.22)');
-    core.addColorStop(Math.min(1, p + 0.34), 'rgba(255, 47, 180, 0)');
-    core.addColorStop(1, 'rgba(255, 47, 180, 0)');
+    core.addColorStop(0, 'rgba(150, 70, 255, 0)');
+    core.addColorStop(Math.max(0, p - 0.34), 'rgba(150, 70, 255, 0)');
+    core.addColorStop(Math.max(0, p - 0.2), 'rgba(150, 70, 255, 0.24)');
+    core.addColorStop(Math.max(0, p - 0.08), 'rgba(222, 72, 242, 0.85)');
+    core.addColorStop(p, '#f0a6ff');
+    core.addColorStop(Math.min(1, p + 0.08), 'rgba(222, 72, 242, 0.85)');
+    core.addColorStop(Math.min(1, p + 0.2), 'rgba(150, 70, 255, 0.24)');
+    core.addColorStop(Math.min(1, p + 0.34), 'rgba(150, 70, 255, 0)');
+    core.addColorStop(1, 'rgba(150, 70, 255, 0)');
     ctx.fillStyle = core;
     ctx.fill();
 
@@ -807,13 +782,13 @@ export class NumberBar {
 
     // baseline with a dot at each whole number
     const lg = ctx.createLinearGradient(0, 0, w, 0);
-    lg.addColorStop(0, 'rgba(255, 47, 180, 0)');
-    lg.addColorStop(0.5, 'rgba(255, 120, 210, 0.8)');
-    lg.addColorStop(1, 'rgba(255, 47, 180, 0)');
+    lg.addColorStop(0, 'rgba(150, 70, 255, 0)');
+    lg.addColorStop(0.5, 'rgba(220, 130, 255, 0.8)');
+    lg.addColorStop(1, 'rgba(150, 70, 255, 0)');
     ctx.fillStyle = lg;
     ctx.fillRect(0, base, w, 1.5);
     if (ppu >= 5) {
-      ctx.fillStyle = 'rgba(255, 190, 235, 0.55)';
+      ctx.fillStyle = 'rgba(230, 195, 255, 0.55)';
       for (let n = lo; n <= hi; n++) {
         const x = this.xOf(n);
         const a = fade(x);
@@ -849,16 +824,11 @@ export class NumberBar {
       ctx.globalAlpha = 1;
       return { x, y };
     };
-    if (this.showPrimes) {
-      for (let n = lo; n <= hi; n++) {
-        if (n !== 0 && !markerAt.has(n) && !answerSet.has(n) && isPrime(this.center + n)) stem(n, c.correct, 1.5, 6);
-      }
-    }
     const stacked = { left: 0, right: 0 };
     for (const m of this.markers) {
       const u = m.value - this.center;
       const x = this.xOf(u);
-      const color = c[m.kind] || '#fff';
+      const color = m.color || '#fff';
       if (x < PAD - 10 || x > w - PAD + 10) {
         const side = x < w / 2 ? 'left' : 'right';
         this.edgeArrow(side, base - 40 - stacked[side] * 16, color);
@@ -866,18 +836,6 @@ export class NumberBar {
         continue;
       }
       stem(u, color, 2, 10);
-    }
-    for (const u of answerSet) {
-      const p = markerAt.has(u) ? { x: this.xOf(u), y: this.surfaceY(u) } : stem(u, c.correct, 2, 10);
-      if (!p) continue;
-      ctx.strokeStyle = c.correct;
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = c.correct;
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
     }
     // N: a straight line from the baseline to the top of the screen
     const x0 = this.xOf(0);
@@ -926,12 +884,12 @@ export class NumberBar {
         a = Math.round(a * 4) / 4; // stepped, like a CRT phosphor
         if (a <= 0) continue;
         g.globalAlpha = a * 0.18;
-        NumberBar.poly(g, s, x, y, '#ff6ad0', 2.4); // soft halo
+        NumberBar.poly(g, s, x, y, '#d070ff', 2.4); // soft halo
         g.globalAlpha = a * 0.8;
         NumberBar.poly(g, s, x - 1, y, 'rgb(255, 50, 140)');
         NumberBar.poly(g, s, x + 1, y, 'rgb(60, 220, 255)');
         g.globalAlpha = a;
-        NumberBar.poly(g, s, x, y, s.white ? '#f4f3f8' : '#ffc4ee');
+        NumberBar.poly(g, s, x, y, s.white ? '#f4f3f8' : '#ecc8ff');
       }
       g.restore();
     }
@@ -1006,7 +964,7 @@ export class NumberBar {
       g.globalCompositeOperation = 'lighter';
       const fl = g.createRadialGradient(ix, iy, 0, ix, iy, 70);
       fl.addColorStop(0, `rgba(255, 255, 255, ${0.8 * this.boom ** 2})`);
-      fl.addColorStop(1, 'rgba(255, 120, 210, 0)');
+      fl.addColorStop(1, 'rgba(220, 120, 255, 0)');
       g.fillStyle = fl;
       g.fillRect(ix - 70, iy - 70, 140, 140);
       const r = 10 + 170 * easeOut(p);
@@ -1032,7 +990,7 @@ export class NumberBar {
         NumberBar.poly(g, d, px - 1, py, 'rgb(255, 50, 140)');
         NumberBar.poly(g, d, px + 1, py, 'rgb(60, 220, 255)');
         g.globalAlpha = a;
-        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : '#ffc4ee');
+        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : '#ecc8ff');
       }
       g.restore();
     }
@@ -1064,7 +1022,7 @@ export class NumberBar {
         }
         g.stroke();
       };
-      line(0, '255, 120, 210', 7, a * 0.25); // soft bloom
+      line(0, '220, 120, 255', 7, a * 0.25); // soft bloom
       line(-1.5, '255, 50, 140', 1.6, a * 0.9);
       line(1.5, '60, 220, 255', 1.6, a * 0.8);
       line(0, '255, 255, 255', 1.2, a);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isPrime, closestPrimes } from '../src/primes.js';
 import { dailyNumber, puzzleNumber, todayKey, yesterdayKey, MIN, MAX } from '../src/daily.js';
-import { levelFor, trend, shareText } from '../src/hints.js';
+import { levelFor, trend, shareText, hintColor } from '../src/hints.js';
 
 test('isPrime', () => {
   const primes = [2, 3, 5, 7, 11, 13, 97, 101, 7919, 9973];
@@ -76,4 +76,12 @@ test('shareText hides numbers', () => {
   assert.equal(text, 'Primedle #4 2/3\n🟧🟩\nhttps://a-nelas.github.io/primedle/');
   const lost = shareText({ num: 4, won: false, guesses: [{ d: 12 }, { d: 7 }, { d: 1 }] });
   assert.match(lost, /^Primedle #4 X\/3\n🟦🟨🟥\n/);
+});
+
+test('hint colour fades from green (spot on) to red (far off)', () => {
+  const hue = (d) => Number(/hsl\((\d+)/.exec(hintColor(d))[1]);
+  assert.equal(hue(0), 130);
+  assert.equal(hue(12), 0);
+  assert.equal(hue(40), 0);
+  for (let d = 1; d <= 12; d++) assert.ok(hue(d) < hue(d - 1), `hue drops at ${d}`);
 });
