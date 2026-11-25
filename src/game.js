@@ -47,7 +47,16 @@ if (stats.lastWinKey !== key && stats.lastWinKey !== yesterdayKey(key)) stats.st
 
 // ---- UI ------------------------------------------------------------------
 
-const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop });
+const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout });
+
+function showReadout(v) {
+  const live = v !== null;
+  $('readout').classList.toggle('live', live);
+  if (!live) return;
+  const delta = v - N;
+  $('readout-value').textContent = String(v);
+  $('readout-delta').textContent = delta === 0 ? '' : delta > 0 ? `+${delta}` : `−${-delta}`;
+}
 
 $('daily-number').textContent = String(N);
 const dateLabel = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
@@ -132,10 +141,12 @@ function render() {
   $('hint').innerHTML = hintHTML();
 
   $('prompt').textContent = over
-    ? 'Green ticks mark the primes nearby.'
+    ? 'Green bars mark the primes nearby.'
     : g.length === 0
       ? 'Drag the ball onto the closest prime.'
       : `Try ${g.length + 1} of ${MAX_TRIES}. Drag again.`;
+
+  $('readout-hint').textContent = over ? 'see you tomorrow ✦' : 'drag the ball ↔';
 
   $('result').hidden = !over;
   if (over) {

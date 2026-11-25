@@ -5,9 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Primedle</title>
   <meta name="description" content="A daily number game: drag the ball onto the prime closest to today's number.">
-  <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#121317" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#0a0612">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="src/game.js"></script>
 </head>
@@ -16,7 +18,7 @@
     <button id="help-btn" class="icon-btn" type="button" aria-label="How to play">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.6 2.3c-.8.4-1.2.9-1.2 1.7v.4"/><circle cx="12" cy="16.9" r=".6" class="fill"/></svg>
     </button>
-    <h1>Prime<span>dle</span></h1>
+    <h1>Primedle</h1>
     <button id="stats-btn" class="icon-btn" type="button" aria-label="Statistics">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>
     </button>
@@ -33,6 +35,11 @@
     <p class="prompt" id="prompt">Drag the ball onto the closest prime.</p>
 
     <div class="bar-card">
+      <div class="readout" id="readout" aria-live="polite">
+        <span class="readout-value" id="readout-value"></span>
+        <span class="readout-delta" id="readout-delta"></span>
+        <span class="readout-hint" id="readout-hint">drag the ball ↔</span>
+      </div>
       <canvas id="bar" tabindex="0" aria-label="Number line. Use the arrow keys to move the ball and Enter to drop it."></canvas>
     </div>
 

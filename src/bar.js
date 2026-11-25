@@ -1,244 +1,349 @@
 import { isPrime } from './primes.js';
 
-const PAD = 30; // px kept free at each end of the track
-const BALL_R = 15;
-const MIN_HALF = 6; // numbers visible on each side at rest
-const STRETCH = 10; // at the far end of the track the view is this many times wider
-const LN_STRETCH = Math.log(STRETCH);
-const STEPS = [1, 2, 5, 10, 20, 25, 50, 100, 200, 500];
+const PAD = 22; // px kept free at each end
+const BALL_R = 14;
+const BASE_HALF = 7; // units visible each side at rest
+const MAX_HALF = 60; // widest the view stretches
+const MAX_REACH = 48; // farthest the camera may travel from N (prime gaps < 10k are ≤ 36)
+const DEAD = 0.15; // camera dead zone, as a fraction of the half-width
+const CHASE = 1.5; // camera speed at the very edge, in half-widths per second…
+const MAX_SPEED = 24; // …capped at this many units per second
+const STIFF = 180;
+const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const DAMP = REDUCED ? 2 * Math.sqrt(STIFF) : 20;
+const STEPS = [1, 2, 5, 10, 20, 25, 50, 100];
+
+const NEON = {
+  cyan: '#2de2ff',
+  violet: '#8a5cff',
+  pink: '#ff2fb4',
+  blush: '#ff8ad8',
+  coral: '#ff9e6b',
+  ice: '#eaf8ff',
+};
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const follow = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
 /**
- * A number line centred on the daily number with a draggable ball.
+ * A neon bar graph with one bar per integer, centred on the daily number N.
  *
- * While dragging, the pointer's position along the track sets both the
- * value under the ball and the zoom: the farther from the centre, the wider
- * the visible range, so the ticks squeeze together (the bar "stretches").
- * The mapping is fixed per position, so the ball always stays under the
- * pointer and a given spot always means the same number.
+ * Positions are in "units": offsets from N. The ball follows the pointer;
+ * the camera (`cam`) chases it once it leaves a dead zone around the middle,
+ * so holding near an edge keeps scrolling. The view widens (`half`) as the
+ * camera travels so N stays on screen. Bars are springs whose targets form a
+ * bell curve under the ball while it is held.
  */
 export class NumberBar {
-  constructor(canvas, { center, onDrop }) {
+  constructor(canvas, { center, onDrop, onHover }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.center = center;
     this.onDrop = onDrop;
+    this.onHover = onHover || (() => {});
 
     this.w = 0;
     this.h = 0;
-    this.base = MIN_HALF; // rest half-range, widened so all markers fit
-    this.half = MIN_HALF; // current half-range
-    this.offset = 0; // ball position in units relative to center
-    this.lift = 0; // 0 = resting on the track, 1 = held up
-    this.mode = 'idle'; // idle | drag | key | anim
+    this.restHalf = BASE_HALF;
+    this.half = BASE_HALF;
+    this.cam = 0;
+    this.ball = 0;
+    this.lift = 0;
+    this.by = null; // smoothed ball y
+    this.sx = 0; // smoothed ball screen x while dragging
+    this.px = 0; // raw pointer x
+    this.grabDx = 0;
     this.kb = 0;
+    this.mode = 'idle'; // idle | drag | key | settle | home
     this.enabled = true;
     this.markers = []; // { value, kind }
     this.answers = [];
     this.showPrimes = false;
+    this.bars = new Map(); // unit -> { h, v }
     this.tween = null;
     this.raf = 0;
+    this.last = 0;
+    this.hovered = undefined;
 
     this.readColors();
-    const mq = matchMedia('(prefers-color-scheme: dark)');
-    mq.addEventListener?.('change', () => {
-      this.readColors();
-      this.draw();
-    });
-
     new ResizeObserver(() => this.resize()).observe(canvas);
+    document.fonts?.ready.then(() => this.draw());
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
-    canvas.addEventListener('pointerup', (e) => this.onUp(e));
+    canvas.addEventListener('pointerup', () => this.onUp());
     canvas.addEventListener('pointercancel', () => this.onCancel());
     canvas.addEventListener('lostpointercapture', () => this.onCancel());
     canvas.addEventListener('keydown', (e) => this.onKey(e));
     canvas.addEventListener('blur', () => {
-      if (this.mode === 'key') this.returnHome();
+      if (this.mode === 'key') this.goHome();
     });
     this.resize();
   }
 
-  /** Update markers / end-of-game display. */
   set({ markers, answers, showPrimes, enabled }) {
     if (markers) this.markers = markers;
     if (answers) this.answers = answers;
     if (showPrimes !== undefined) this.showPrimes = showPrimes;
     if (enabled !== undefined) this.enabled = enabled;
-    // While playing the rest view stays close in, so a wild guess doesn't
-    // cost precision later. At the end, fit the answer with some room around
-    // it. Guesses outside the view show as arrows at the edges.
     let far = 0;
     for (const a of this.answers) far = Math.max(far, Math.abs(a - this.center));
-    this.base = this.answers.length ? Math.max(MIN_HALF + 2, Math.ceil(far * 1.5) + 3) : MIN_HALF;
-    if (this.mode === 'idle') this.half = this.base;
+    this.restHalf = this.answers.length ? Math.max(BASE_HALF + 2, Math.ceil(far * 1.5) + 3) : BASE_HALF;
     this.canvas.style.cursor = this.enabled ? 'grab' : 'default';
-    this.draw();
+    this.kick();
   }
 
   readColors() {
     const s = getComputedStyle(document.documentElement);
-    const g = (n) => s.getPropertyValue(n).trim();
+    const g = (n, fb) => s.getPropertyValue(n).trim() || fb;
     this.colors = {
-      track: g('--bar-track'),
-      tick: g('--bar-tick'),
-      label: g('--muted'),
-      ink: g('--ink'),
-      bg: g('--surface'),
-      accent: g('--accent'),
-      accentHi: g('--accent-hi'),
-      correct: g('--correct'),
-      hot: g('--hot'),
-      warm: g('--warm'),
-      cool: g('--cool'),
-      cold: g('--cold'),
+      label: g('--muted', '#b9a9d6'),
+      correct: g('--correct', '#3dff9a'),
+      hot: g('--hot', '#ff3d6e'),
+      warm: g('--warm', '#ff9a3d'),
+      cool: g('--cool', '#ffe45c'),
+      cold: g('--cold', '#3dc8ff'),
     };
   }
 
   resize() {
     const dpr = window.devicePixelRatio || 1;
-    const rect = this.canvas.getBoundingClientRect();
-    this.w = rect.width;
-    this.h = rect.height;
-    this.canvas.width = Math.round(rect.width * dpr);
-    this.canvas.height = Math.round(rect.height * dpr);
+    const r = this.canvas.getBoundingClientRect();
+    this.w = r.width;
+    this.h = r.height;
+    this.canvas.width = Math.round(r.width * dpr);
+    this.canvas.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.draw();
+    const g = this.ctx.createLinearGradient(0, this.baseline, 0, this.baseline - this.maxH);
+    g.addColorStop(0, NEON.cyan);
+    g.addColorStop(0.28, NEON.violet);
+    g.addColorStop(0.58, NEON.pink);
+    g.addColorStop(0.8, NEON.blush);
+    g.addColorStop(1, NEON.coral);
+    this.grad = g;
+    this.by = null;
+    this.kick();
   }
+
+  // ---- geometry ----------------------------------------------------------
 
   get usable() {
     return Math.max(40, this.w / 2 - PAD);
   }
-  get trackY() {
-    return this.h * 0.66;
+  get ppu() {
+    return this.usable / this.half;
   }
-  xOf(units) {
-    return this.w / 2 + (units * this.usable) / this.half;
+  get baseline() {
+    return this.h - 40;
   }
-  ballY() {
-    return this.trackY - BALL_R - 1 - this.lift * 30;
+  get maxH() {
+    return Math.max(40, this.baseline - 2 * BALL_R - 22);
   }
-  hoverUnits() {
-    return this.mode === 'key' ? this.kb : Math.round(this.offset);
+  restFor(n) {
+    if (n === 0) return this.maxH * 0.2;
+    if (this.showPrimes && isPrime(this.center + n)) return this.maxH * 0.3;
+    return this.maxH * 0.12;
+  }
+  xOf(u) {
+    return this.w / 2 + (u - this.cam) * this.ppu;
+  }
+  heightAt(u) {
+    const n0 = Math.floor(u);
+    const t = u - n0;
+    const a = this.bars.get(n0)?.h ?? this.restFor(n0);
+    const b = this.bars.get(n0 + 1)?.h ?? this.restFor(n0 + 1);
+    return a + (b - a) * t;
+  }
+  ballX() {
+    return this.mode === 'drag' ? this.sx : this.xOf(this.ball);
   }
 
-  // ---- animation -------------------------------------------------------
+  // ---- simulation --------------------------------------------------------
 
-  animate(to, dur, ease = easeOut, done) {
+  kick() {
+    if (this.raf) return;
+    this.last = performance.now();
+    this.raf = requestAnimationFrame((t) => this.frame(t));
+  }
+
+  frame(t) {
+    this.raf = 0;
+    const dt = clamp((t - this.last) / 1000, 0.001, 1 / 30);
+    this.last = t;
+    const busy = this.step(dt);
+    this.draw();
+    if (busy) {
+      this.raf = requestAnimationFrame((t2) => this.frame(t2));
+    }
+  }
+
+  zoomStep(dt) {
+    const target = clamp(Math.max(this.restHalf, (Math.abs(this.cam) + 2) / 0.82), this.restHalf, MAX_HALF);
+    this.half += (target - this.half) * follow(6, dt);
+    return Math.abs(target - this.half) > 0.001;
+  }
+
+  step(dt) {
+    let busy = false;
+
+    if (this.mode === 'drag') {
+      busy = true;
+      this.sx += (clamp(this.px - this.grabDx, PAD, this.w - PAD) - this.sx) * follow(25, dt);
+      const frac = (this.sx - this.w / 2) / this.usable;
+      const ex = Math.max(0, Math.abs(frac) - DEAD) / (1 - DEAD);
+      const speed = ex * ex * Math.min(this.half * CHASE, MAX_SPEED);
+      this.cam = clamp(this.cam + Math.sign(frac) * speed * dt, -MAX_REACH, MAX_REACH);
+      this.zoomStep(dt);
+      this.ball = this.cam + (this.sx - this.w / 2) / this.ppu;
+      this.lift += (1 - this.lift) * follow(10, dt);
+    } else if (this.mode === 'key') {
+      busy = true;
+      this.ball += (this.kb - this.ball) * follow(14, dt);
+      this.cam += (this.ball - this.cam) * follow(5, dt);
+      this.zoomStep(dt);
+      this.lift += (1 - this.lift) * follow(10, dt);
+    } else if (this.mode === 'idle') {
+      busy = this.zoomStep(dt) || busy;
+    }
+
+    const tw = this.tween;
+    if (tw) {
+      busy = true;
+      tw.t += dt;
+      const p = clamp(tw.t / tw.dur, 0, 1);
+      const e = tw.ease(p);
+      for (const k in tw.to) this[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e;
+      if (p >= 1) {
+        this.tween = null;
+        tw.done?.();
+      }
+    }
+
+    // bar springs
+    const ppu = this.ppu;
+    const sigma = Math.max(1.1, 30 / ppu);
+    const lo = Math.floor(this.cam - this.half - 3);
+    const hi = Math.ceil(this.cam + this.half + 3);
+    const peak = this.maxH;
+    for (let n = lo; n <= hi; n++) {
+      const rest = this.restFor(n);
+      const d = n - this.ball;
+      const target = rest + (peak - rest) * this.lift * Math.exp(-(d * d) / (2 * sigma * sigma));
+      let b = this.bars.get(n);
+      if (!b) {
+        b = { h: target, v: 0 };
+        this.bars.set(n, b);
+      }
+      const a = STIFF * (target - b.h) - DAMP * b.v;
+      b.v += a * dt;
+      b.h = Math.max(2, b.h + b.v * dt);
+      if (Math.abs(b.v) > 0.5 || Math.abs(target - b.h) > 0.3) busy = true;
+    }
+    if (this.bars.size > 600) {
+      for (const n of this.bars.keys()) if (n < lo - 20 || n > hi + 20) this.bars.delete(n);
+    }
+
+    // ball rides on the bar beneath it
+    const targetY = this.baseline - this.heightAt(this.ball) - BALL_R - 3;
+    if (this.by === null) this.by = targetY;
+    this.by += (targetY - this.by) * follow(22, dt);
+    if (Math.abs(targetY - this.by) > 0.2) busy = true;
+
+    // readout
+    const live = this.mode === 'drag' || this.mode === 'key' || this.mode === 'settle';
+    const hv = live ? this.center + Math.round(this.mode === 'key' ? this.kb : this.ball) : null;
+    if (hv !== this.hovered) {
+      this.hovered = hv;
+      this.onHover(hv);
+    }
+
+    return busy;
+  }
+
+  animate(to, dur, ease, done) {
     const from = {};
     for (const k in to) from[k] = this[k];
-    this.tween = { from, to, dur, ease, done, t0: performance.now() };
-    this.loop();
+    this.tween = { from, to, dur, ease, done, t: 0 };
+    this.kick();
   }
 
-  loop() {
-    if (this.raf) return;
-    this.raf = requestAnimationFrame((t) => {
-      this.raf = 0;
-      let more = false;
-      const tw = this.tween;
-      if (tw) {
-        const p = clamp((t - tw.t0) / tw.dur, 0, 1);
-        const e = tw.ease(p);
-        for (const k in tw.to) this[k] = tw.from[k] + (tw.to[k] - tw.from[k]) * e;
-        if (p < 1) more = true;
-        else {
-          this.tween = null;
-          tw.done?.();
-          if (this.tween) more = true;
-        }
-      }
-      if (this.mode === 'drag' || this.mode === 'key') {
-        this.lift += (1 - this.lift) * 0.3;
-        if (1 - this.lift > 0.002) more = true;
-        else this.lift = 1;
-      }
-      this.draw();
-      if (more) this.loop();
-    });
-  }
-
-  returnHome() {
-    this.mode = 'anim';
-    this.animate({ offset: 0, half: this.base, lift: 0 }, 480, easeInOut, () => {
+  goHome() {
+    this.mode = 'home';
+    this.animate({ ball: 0, cam: 0, half: this.restHalf, lift: 0 }, 0.55, easeInOut, () => {
       this.mode = 'idle';
-      this.half = this.base;
     });
   }
 
-  drop() {
-    const v = this.hoverUnits();
-    this.mode = 'anim';
+  release() {
+    const v = this.mode === 'key' ? this.kb : Math.round(this.ball);
+    this.mode = 'settle';
     if (v === 0) {
-      this.returnHome();
+      this.goHome();
       return;
     }
-    this.animate({ offset: v, lift: 0 }, 170, easeOut, () => {
+    this.animate({ ball: v, lift: 0 }, 0.22, easeOut, () => {
+      for (let d = -3; d <= 3; d++) {
+        const b = this.bars.get(v + d);
+        if (b) b.v -= 240 * Math.exp(-(d * d) / 3);
+      }
       const accepted = this.onDrop(this.center + v);
-      this.animate({}, accepted ? 650 : 120, easeOut, () => this.returnHome());
+      this.animate({}, accepted ? 0.6 : 0.12, easeOut, () => this.goHome());
     });
   }
 
-  // ---- input -----------------------------------------------------------
+  // ---- input -------------------------------------------------------------
 
-  pointerPos(e) {
-    const r = this.canvas.getBoundingClientRect();
-    return { x: e.clientX - r.left, y: e.clientY - r.top };
+  pointerX(e) {
+    return e.clientX - this.canvas.getBoundingClientRect().left;
   }
 
-  hitsBall({ x, y }) {
-    return Math.hypot(x - this.xOf(this.offset), y - this.ballY()) <= BALL_R + 16;
+  hitsBall(e) {
+    const r = this.canvas.getBoundingClientRect();
+    const by = this.by ?? this.baseline;
+    return Math.hypot(e.clientX - r.left - this.ballX(), e.clientY - r.top - by) <= BALL_R + 18;
   }
 
   onDown(e) {
-    if (!this.enabled || this.mode === 'anim' || this.mode === 'drag') return;
-    const p = this.pointerPos(e);
-    if (!this.hitsBall(p)) return;
+    if (!this.enabled || (this.mode !== 'idle' && this.mode !== 'key')) return;
+    if (!this.hitsBall(e)) return;
     e.preventDefault();
     try {
       this.canvas.setPointerCapture(e.pointerId);
     } catch {
       /* pointer already gone */
     }
-    this.grabDx = p.x - this.xOf(this.offset);
+    this.px = this.pointerX(e);
+    this.sx = this.xOf(this.ball);
+    this.grabDx = this.px - this.sx;
     this.mode = 'drag';
     this.canvas.style.cursor = 'grabbing';
-    this.dragTo(p.x);
+    this.kick();
   }
 
   onMove(e) {
-    const p = this.pointerPos(e);
     if (this.mode === 'drag') {
-      this.dragTo(p.x);
+      this.px = this.pointerX(e);
+      this.kick();
     } else if (this.enabled && this.mode === 'idle' && e.pointerType === 'mouse') {
-      this.canvas.style.cursor = this.hitsBall(p) ? 'grab' : 'default';
+      this.canvas.style.cursor = this.hitsBall(e) ? 'grab' : 'default';
     }
-  }
-
-  dragTo(px) {
-    const frac = clamp((px - this.grabDx - this.w / 2) / this.usable, -1, 1);
-    this.half = this.base * Math.exp(LN_STRETCH * Math.abs(frac));
-    this.offset = frac * this.half;
-    this.loop();
   }
 
   onUp() {
     if (this.mode !== 'drag') return;
     this.canvas.style.cursor = 'grab';
-    this.drop();
+    this.release();
   }
 
   onCancel() {
     if (this.mode !== 'drag') return;
     this.canvas.style.cursor = 'grab';
-    this.returnHome();
+    this.goHome();
   }
 
   onKey(e) {
-    if (!this.enabled || this.mode === 'anim' || this.mode === 'drag') return;
+    if (!this.enabled || (this.mode !== 'idle' && this.mode !== 'key')) return;
     const k = e.key;
     if (k === 'ArrowLeft' || k === 'ArrowRight') {
       e.preventDefault();
@@ -246,191 +351,228 @@ export class NumberBar {
         this.mode = 'key';
         this.kb = 0;
       }
-      const lim = Math.round(this.base * STRETCH);
       const step = (k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
-      this.kb = clamp(this.kb + step, -lim, lim);
-      this.animate({ offset: this.kb, half: Math.max(this.base, Math.abs(this.kb) / 0.75) }, 160);
+      this.kb = clamp(this.kb + step, -MAX_REACH, MAX_REACH);
+      this.kick();
     } else if ((k === 'Enter' || k === ' ') && this.mode === 'key') {
       e.preventDefault();
-      this.drop();
+      this.release();
     } else if (k === 'Escape' && this.mode === 'key') {
-      this.returnHome();
+      this.goHome();
     }
   }
 
-  // ---- drawing ---------------------------------------------------------
+  // ---- drawing -----------------------------------------------------------
 
   draw() {
     const { ctx, w, h, colors: c } = this;
     if (!w || !h) return;
     ctx.clearRect(0, 0, w, h);
 
-    const ty = this.trackY;
-    const ppu = this.usable / this.half;
-    const labelStep = STEPS.find((s) => s * ppu >= 40) ?? 1000;
-    const tickStep = STEPS.find((s) => s * ppu >= 6) ?? 1000;
-    const edgeAlpha = (x) => clamp((Math.min(x, w - x) - 4) / (PAD + 6), 0, 1);
-    const xN = this.xOf(0);
+    const base = this.baseline;
+    const ppu = this.ppu;
+    const gap = clamp(ppu * 0.22, 0, 3);
+    const bw = Math.max(1, ppu - gap);
+    const radius = bw > 6 ? Math.min(4, bw / 2) : 0;
+    const lo = Math.floor(this.cam - this.half - 2);
+    const hi = Math.ceil(this.cam + this.half + 2);
+    const fade = (x) => clamp((Math.min(x, w - x) - 2) / 28, 0, 1);
+    const showBall = this.enabled || this.mode !== 'idle';
+    const bx = this.ballX();
+    const hoverU = Math.round(this.mode === 'key' ? this.kb : this.ball);
+    const markerAt = new Map(this.markers.map((m) => [m.value - this.center, m]));
+    const answerSet = new Set(this.answers.map((a) => a - this.center));
 
-    // track
-    ctx.lineCap = 'round';
-    ctx.strokeStyle = c.track;
-    ctx.lineWidth = 6;
-    ctx.beginPath();
-    ctx.moveTo(8, ty);
-    ctx.lineTo(w - 8, ty);
-    ctx.stroke();
+    // glow behind the bell
+    if (showBall && this.lift > 0.01) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      const gy = base - this.maxH * 0.45;
+      const rg = ctx.createRadialGradient(bx, gy, 0, bx, gy, 140);
+      rg.addColorStop(0, `rgba(255, 47, 180, ${0.32 * this.lift})`);
+      rg.addColorStop(1, 'rgba(255, 47, 180, 0)');
+      ctx.fillStyle = rg;
+      ctx.fillRect(bx - 140, gy - 140, 280, 280);
+      ctx.restore();
+    }
 
-    // ticks + labels
-    const lo = Math.floor(this.center - this.half - 3);
-    const hi = Math.ceil(this.center + this.half + 3);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.font = '500 12px ui-sans-serif, system-ui, sans-serif';
-    for (let n = Math.ceil(lo / tickStep) * tickStep; n <= hi; n += tickStep) {
-      if (n === this.center) continue;
-      const x = this.xOf(n - this.center);
-      const a = edgeAlpha(x);
+    // bars (and a faint reflection below the baseline)
+    const shapes = [];
+    for (let n = lo; n <= hi; n++) {
+      const x = this.xOf(n);
+      const a = fade(x);
       if (a <= 0) continue;
-      const major = n % labelStep === 0;
-      const prime = this.showPrimes && isPrime(n);
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = prime ? c.correct : c.tick;
-      ctx.lineWidth = prime ? 2.5 : major ? 2 : 1.25;
-      const th = prime ? 10 : major ? 9 : 5;
-      ctx.beginPath();
-      ctx.moveTo(x, ty - th);
-      ctx.lineTo(x, ty + th);
-      ctx.stroke();
-      if (major && Math.abs(x - xN) > 34) {
-        ctx.fillStyle = c.label;
-        ctx.fillText(String(n), x, ty + 16);
+      const bh = this.bars.get(n)?.h ?? this.restFor(n);
+      let fill = this.grad;
+      let glow = null;
+      const m = markerAt.get(n);
+      if (n === 0) {
+        fill = NEON.ice;
+        glow = 'rgba(200, 240, 255, 0.9)';
+      } else if (m) {
+        fill = c[m.kind] || NEON.ice;
+        glow = fill;
+      } else if (answerSet.has(n)) {
+        fill = c.correct;
+        glow = c.correct;
+      } else if (this.showPrimes && isPrime(this.center + n)) {
+        fill = c.correct;
       }
+      shapes.push({ n, x, a, bh, fill });
+      ctx.globalAlpha = a;
+      ctx.fillStyle = fill;
+      if (glow) {
+        ctx.shadowColor = glow;
+        ctx.shadowBlur = 14;
+      }
+      ctx.beginPath();
+      if (radius && ctx.roundRect) ctx.roundRect(x - bw / 2, base - bh, bw, bh, [radius, radius, 0, 0]);
+      else ctx.rect(x - bw / 2, base - bh, bw, bh);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      if (showBall && n === hoverU && this.lift > 0.05 && n !== 0 && !m) {
+        ctx.globalAlpha = a * this.lift * 0.85;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(x - bw / 2, base - bh, bw, Math.min(4, bh));
+      }
+    }
+    for (const s of shapes) {
+      ctx.globalAlpha = s.a * 0.13;
+      ctx.fillStyle = s.fill;
+      ctx.fillRect(s.x - bw / 2, base + 2, bw, Math.min(30, s.bh * 0.35));
     }
     ctx.globalAlpha = 1;
 
-    // daily number
-    ctx.strokeStyle = c.accent;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(xN, ty - 13);
-    ctx.lineTo(xN, ty + 13);
-    ctx.stroke();
-    ctx.fillStyle = c.accent;
-    ctx.font = '700 15px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillText(String(this.center), xN, ty + 17);
+    // baseline
+    const lg = ctx.createLinearGradient(0, 0, w, 0);
+    lg.addColorStop(0, 'rgba(45, 226, 255, 0)');
+    lg.addColorStop(0.5, 'rgba(255, 47, 180, 0.7)');
+    lg.addColorStop(1, 'rgba(45, 226, 255, 0)');
+    ctx.fillStyle = lg;
+    ctx.fillRect(0, base, w, 1.5);
 
-    // hovered tick
-    const hv = this.hoverUnits();
-    if (this.lift > 0.05 && hv !== 0) {
-      const x = this.xOf(hv);
-      ctx.globalAlpha = this.lift;
-      ctx.strokeStyle = c.accentHi;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(x, ty - 12);
-      ctx.lineTo(x, ty + 12);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+    // tick labels
+    const labelStep = STEPS.find((s) => s * ppu >= 42) ?? 200;
+    const xN = this.xOf(0);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.font = '600 11px Outfit, ui-sans-serif, system-ui, sans-serif';
+    ctx.fillStyle = c.label;
+    for (let n = lo; n <= hi; n++) {
+      const v = this.center + n;
+      if (n === 0 || v % labelStep !== 0) continue;
+      const x = this.xOf(n);
+      if (Math.abs(x - xN) < 40) continue;
+      ctx.globalAlpha = fade(x) * 0.85;
+      ctx.fillText(String(v), x, base + 12);
     }
+    ctx.globalAlpha = 1;
 
-    // correct answer rings
-    for (const p of this.answers) {
-      const x = this.xOf(p - this.center);
-      ctx.strokeStyle = c.correct;
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(x, ty, 11, 0, Math.PI * 2);
-      ctx.stroke();
+    // daily number label, or an arrow pinned to the edge when off-screen
+    ctx.font = '800 15px Outfit, ui-sans-serif, system-ui, sans-serif';
+    if (xN >= PAD - 6 && xN <= w - PAD + 6) {
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowColor = NEON.pink;
+      ctx.shadowBlur = 10;
+      ctx.fillText(String(this.center), xN, base + 10);
+      ctx.shadowBlur = 0;
+    } else {
+      this.edgeArrow(xN < w / 2 ? 'left' : 'right', base - 24, String(this.center), '#ffffff', 0);
     }
 
     // guess markers
-    ctx.font = '700 11px ui-sans-serif, system-ui, sans-serif';
-    ctx.textBaseline = 'alphabetic';
     const stacked = { left: 0, right: 0 };
+    ctx.font = '700 11px Outfit, ui-sans-serif, system-ui, sans-serif';
     for (const m of this.markers) {
-      const x = this.xOf(m.value - this.center);
-      ctx.fillStyle = c[m.kind] || c.ink;
-      if (x < PAD - 14 || x > w - PAD + 14) {
-        // off-screen: arrow at the edge pointing to it
+      const u = m.value - this.center;
+      const x = this.xOf(u);
+      const color = c[m.kind] || '#fff';
+      if (x < PAD - 10 || x > w - PAD + 10) {
         const side = x < w / 2 ? 'left' : 'right';
-        const dir = side === 'left' ? -1 : 1;
-        const ex = side === 'left' ? 14 : w - 14;
-        const ey = ty - 30 - stacked[side] * 22;
+        this.edgeArrow(side, base - 50 - stacked[side] * 20, String(m.value), color, stacked[side]);
         stacked[side] += 1;
-        ctx.beginPath();
-        ctx.moveTo(ex + dir * 7, ey);
-        ctx.lineTo(ex - dir * 3, ey - 6);
-        ctx.lineTo(ex - dir * 3, ey + 6);
-        ctx.closePath();
-        ctx.fill();
-        ctx.textAlign = side === 'left' ? 'left' : 'right';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(String(m.value), ex - dir * 7, ey + 1);
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'alphabetic';
         continue;
       }
-      ctx.strokeStyle = c.bg;
-      ctx.lineWidth = 2;
+      const top = base - (this.bars.get(u)?.h ?? this.restFor(u));
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 10;
       ctx.beginPath();
-      ctx.arc(x, ty, 7, 0, Math.PI * 2);
+      ctx.arc(x, top - 8, 4.5, 0, Math.PI * 2);
       ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.textBaseline = 'alphabetic';
+      if (labelStep > 1 || !this.enabled) ctx.fillText(String(m.value), x, top - 17);
+      ctx.textBaseline = 'top';
+    }
+
+    // answer rings
+    for (const u of answerSet) {
+      const x = this.xOf(u);
+      const top = base - (this.bars.get(u)?.h ?? this.restFor(u));
+      ctx.strokeStyle = c.correct;
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = c.correct;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(x, top - 10, 7, 0, Math.PI * 2);
       ctx.stroke();
-      if (labelStep > 1 || this.answers.length) {
-        ctx.fillText(String(m.value), x, ty - 15);
+      ctx.shadowBlur = 0;
+      if (!markerAt.has(u)) {
+        ctx.fillStyle = c.correct;
+        ctx.textBaseline = 'alphabetic';
+        ctx.fillText(String(this.center + u), x, top - 22);
+        ctx.textBaseline = 'top';
       }
     }
-    for (const p of this.answers) {
-      if (this.markers.some((m) => m.value === p)) continue;
-      ctx.fillStyle = c.correct;
-      ctx.fillText(String(p), this.xOf(p - this.center), ty - 17);
-    }
 
-    // the ball is put away once the game is over
-    if (!this.enabled && this.mode === 'idle') return;
-
-    // ball shadow
-    const bx = this.xOf(this.offset);
-    const by = this.ballY();
-    ctx.globalAlpha = 0.22 * (1 - this.lift * 0.5);
-    ctx.fillStyle = '#000';
-    ctx.beginPath();
-    ctx.ellipse(bx, ty + 1, BALL_R * (1 - this.lift * 0.35), 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+    if (!showBall) return;
 
     // ball
-    const grad = ctx.createRadialGradient(bx - 5, by - 6, 2, bx, by, BALL_R);
-    grad.addColorStop(0, c.accentHi);
-    grad.addColorStop(1, c.accent);
-    ctx.fillStyle = grad;
+    const by = this.by ?? base - BALL_R;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const halo = ctx.createRadialGradient(bx, by, BALL_R * 0.6, bx, by, BALL_R * 3);
+    halo.addColorStop(0, `rgba(255, 47, 180, ${0.35 + 0.25 * this.lift})`);
+    halo.addColorStop(1, 'rgba(255, 47, 180, 0)');
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(bx, by, BALL_R * 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const sphere = ctx.createRadialGradient(bx - 4, by - 5, 1, bx, by, BALL_R);
+    sphere.addColorStop(0, '#ffffff');
+    sphere.addColorStop(0.35, '#ff7ad9');
+    sphere.addColorStop(1, '#c3128a');
+    ctx.fillStyle = sphere;
     ctx.beginPath();
     ctx.arc(bx, by, BALL_R, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 190, 240, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
 
-    // value bubble
-    if (this.lift > 0.02) {
-      const text = String(this.center + hv);
-      ctx.font = '700 14px ui-sans-serif, system-ui, sans-serif';
-      const bw = ctx.measureText(text).width + 18;
-      const bh = 24;
-      const bxl = clamp(bx - bw / 2, 4, w - 4 - bw);
-      const byt = by - BALL_R - 10 - bh;
-      ctx.globalAlpha = this.lift;
-      ctx.fillStyle = c.ink;
-      ctx.beginPath();
-      ctx.roundRect(bxl, byt, bw, bh, 8);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.moveTo(bx - 5, byt + bh);
-      ctx.lineTo(bx + 5, byt + bh);
-      ctx.lineTo(bx, byt + bh + 5);
-      ctx.fill();
-      ctx.fillStyle = c.bg;
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, bxl + bw / 2, byt + bh / 2 + 1);
-      ctx.globalAlpha = 1;
-    }
+  edgeArrow(side, y, text, color, _i) {
+    const { ctx, w } = this;
+    const dir = side === 'left' ? -1 : 1;
+    const ex = side === 'left' ? 12 : w - 12;
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.moveTo(ex + dir * 6, y);
+    ctx.lineTo(ex - dir * 3, y - 6);
+    ctx.lineTo(ex - dir * 3, y + 6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.font = '700 12px Outfit, ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = side === 'left' ? 'left' : 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, ex - dir * 7, y + 1);
+    ctx.restore();
   }
 }
