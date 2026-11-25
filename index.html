@@ -9,7 +9,7 @@
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=VT323&display=swap">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="src/game.js"></script>
 </head>
@@ -36,8 +36,10 @@
 
     <div class="bar-card">
       <div class="readout" id="readout" aria-live="polite">
-        <span class="readout-value" id="readout-value"></span>
-        <span class="readout-delta" id="readout-delta"></span>
+        <span class="crt">
+          <span class="readout-value" id="readout-value"></span>
+          <span class="readout-delta" id="readout-delta"></span>
+        </span>
         <span class="readout-hint" id="readout-hint">drag the ball ↔</span>
       </div>
       <canvas id="bar" tabindex="0" aria-label="Number line. Use the arrow keys to move the ball and Enter to drop it."></canvas>

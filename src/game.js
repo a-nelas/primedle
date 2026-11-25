@@ -55,7 +55,7 @@ function showReadout(v) {
   if (!live) return;
   const delta = v - N;
   $('readout-value').textContent = String(v);
-  $('readout-delta').textContent = delta === 0 ? '' : delta > 0 ? `+${delta}` : `−${-delta}`;
+  $('readout-delta').textContent = delta === 0 ? '' : delta > 0 ? `+${delta}` : `-${-delta}`;
 }
 
 $('daily-number').textContent = String(N);

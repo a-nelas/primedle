@@ -137,32 +137,64 @@ main {
 }
 
 .readout {
-  height: 52px;
+  height: 56px;
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: center;
-  gap: 8px;
   pointer-events: none;
   user-select: none;
 }
-.readout-value {
-  font-size: 2.6rem;
-  font-weight: 800;
-  line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-  color: #fff;
-  text-shadow: 0 0 12px var(--pink), 0 0 30px rgb(255 47 180 / 0.6);
+
+/* CRT-style digits: phosphor glow, a little RGB fringing, scanlines, flicker */
+.crt {
+  position: relative;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 18px;
+  font-family: VT323, ui-monospace, "Cascadia Mono", Consolas, monospace;
+  color: #e9e8ee;
   opacity: 0;
-  transform: scale(0.85);
+  transform: scale(0.9);
+  filter: blur(0.3px);
   transition: opacity 0.18s, transform 0.18s;
 }
+.crt::after {
+  content: "";
+  position: absolute;
+  inset: -4px 0;
+  background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0) 0 2px, rgb(10 6 18 / 0.5) 2px 3px);
+  -webkit-mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
+  mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
+  pointer-events: none;
+}
+.readout-value {
+  font-size: 3.4rem;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  text-shadow:
+    -1.5px 0 rgb(255 50 140 / 0.7),
+    1.5px 0 rgb(60 220 255 / 0.6),
+    0 0 8px rgb(255 255 255 / 0.55),
+    0 0 26px rgb(255 255 255 / 0.25);
+}
 .readout-delta {
-  font-size: 1rem;
-  font-weight: 700;
-  color: var(--blush);
-  font-variant-numeric: tabular-nums;
-  opacity: 0;
-  transition: opacity 0.18s;
+  font-size: 1.5rem;
+  line-height: 1;
+  color: #b8b6c2;
+  text-shadow: 0 0 6px rgb(255 255 255 / 0.35);
+}
+.readout.live .crt {
+  opacity: 1;
+  transform: scale(1);
+  animation: crt-flicker 3.2s steps(1) infinite;
+}
+@keyframes crt-flicker {
+  0%, 100% { opacity: 1; }
+  41% { opacity: 0.86; }
+  42% { opacity: 1; }
+  77% { opacity: 0.93; transform: translateX(0.5px); }
+  78% { opacity: 1; transform: none; }
 }
 .readout-hint {
   position: absolute;
@@ -174,8 +206,6 @@ main {
   letter-spacing: 0.04em;
   transition: opacity 0.18s;
 }
-.readout.live .readout-value { opacity: 1; transform: scale(1); }
-.readout.live .readout-delta { opacity: 0.9; }
 .readout.live .readout-hint { opacity: 0; }
 
 #bar {
@@ -340,5 +370,6 @@ dialog::backdrop { background: rgb(5 2 10 / 0.7); backdrop-filter: blur(3px); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast, .readout-value, .readout-delta, .readout-hint, .primary { transition: none; }
+  .toast, .crt, .readout-hint, .primary { transition: none; }
+  .readout.live .crt { animation: none; }
 }

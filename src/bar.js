@@ -12,29 +12,23 @@ const STIFF = 180;
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const DAMP = REDUCED ? 2 * Math.sqrt(STIFF) : 20;
 const STEPS = [1, 2, 5, 10, 20, 25, 50, 100];
-
-const NEON = {
-  cyan: '#2de2ff',
-  violet: '#8a5cff',
-  pink: '#ff2fb4',
-  blush: '#ff8ad8',
-  coral: '#ff9e6b',
-  ice: '#eaf8ff',
-};
+const MAX_SPARKS = 260;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const follow = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeOut = (t) => 1 - (1 - t) ** 3;
 const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
+const gauss = () => (Math.random() + Math.random() + Math.random() - 1.5) * 1.4;
 
 /**
- * A neon bar graph with one bar per integer, centred on the daily number N.
+ * A glowing pink wave over the number line, centred on the daily number N.
  *
- * Positions are in "units": offsets from N. The ball follows the pointer;
- * the camera (`cam`) chases it once it leaves a dead zone around the middle,
- * so holding near an edge keeps scrolling. The view widens (`half`) as the
- * camera travels so N stays on screen. Bars are springs whose targets form a
- * bell curve under the ball while it is held.
+ * Positions are in "units": offsets from N. Each integer is a spring node;
+ * the wave is a smooth curve through the nodes plus a gentle ambient ripple.
+ * While the ball is held the nodes rise into a bell curve under it.
+ * The ball follows the pointer; the camera (`cam`) chases it once it leaves
+ * a dead zone around the middle, so holding near an edge keeps scrolling.
+ * The view widens (`half`) as the camera travels so N stays on screen.
  */
 export class NumberBar {
   constructor(canvas, { center, onDrop, onHover }) {
@@ -61,7 +55,11 @@ export class NumberBar {
     this.markers = []; // { value, kind }
     this.answers = [];
     this.showPrimes = false;
-    this.bars = new Map(); // unit -> { h, v }
+    this.nodes = new Map(); // unit -> { h, v }
+    this.sparks = [];
+    this.spawnAcc = 0;
+    this.ambientAcc = 0;
+    this.time = 0;
     this.tween = null;
     this.raf = 0;
     this.last = 0;
@@ -69,7 +67,7 @@ export class NumberBar {
 
     this.readColors();
     new ResizeObserver(() => this.resize()).observe(canvas);
-    document.fonts?.ready.then(() => this.draw());
+    document.fonts?.ready.then(() => this.kick());
     canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     canvas.addEventListener('pointermove', (e) => this.onMove(e));
     canvas.addEventListener('pointerup', () => this.onUp());
@@ -115,13 +113,16 @@ export class NumberBar {
     this.canvas.width = Math.round(r.width * dpr);
     this.canvas.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const g = this.ctx.createLinearGradient(0, this.baseline, 0, this.baseline - this.maxH);
-    g.addColorStop(0, NEON.cyan);
-    g.addColorStop(0.28, NEON.violet);
-    g.addColorStop(0.58, NEON.pink);
-    g.addColorStop(0.8, NEON.blush);
-    g.addColorStop(1, NEON.coral);
-    this.grad = g;
+
+    const top = this.baseline - this.maxH;
+    const fill = this.ctx.createLinearGradient(0, this.baseline, 0, top);
+    fill.addColorStop(0, 'rgba(150, 20, 120, 0.10)');
+    fill.addColorStop(0.1, 'rgba(255, 47, 180, 0.45)');
+    fill.addColorStop(0.35, 'rgba(255, 79, 195, 0.85)');
+    fill.addColorStop(0.7, '#ff9ddf');
+    fill.addColorStop(1, '#fff0fa');
+    this.fill = fill;
+
     this.by = null;
     this.kick();
   }
@@ -141,22 +142,43 @@ export class NumberBar {
     return Math.max(40, this.baseline - 2 * BALL_R - 22);
   }
   restFor(n) {
-    if (n === 0) return this.maxH * 0.2;
-    if (this.showPrimes && isPrime(this.center + n)) return this.maxH * 0.3;
-    return this.maxH * 0.12;
+    if (this.showPrimes && n !== 0 && isPrime(this.center + n)) return this.maxH * 0.32;
+    return this.maxH * 0.16;
   }
   xOf(u) {
     return this.w / 2 + (u - this.cam) * this.ppu;
   }
-  heightAt(u) {
-    const n0 = Math.floor(u);
-    const t = u - n0;
-    const a = this.bars.get(n0)?.h ?? this.restFor(n0);
-    const b = this.bars.get(n0 + 1)?.h ?? this.restFor(n0 + 1);
-    return a + (b - a) * t;
+  uOf(x) {
+    return this.cam + (x - this.w / 2) / this.ppu;
+  }
+  nodeH(n) {
+    return this.nodes.get(n)?.h ?? this.restFor(n);
+  }
+  /** Smooth height through the spring nodes (Catmull-Rom). */
+  springH(u) {
+    const n = Math.floor(u);
+    const t = u - n;
+    const p0 = this.nodeH(n - 1);
+    const p1 = this.nodeH(n);
+    const p2 = this.nodeH(n + 1);
+    const p3 = this.nodeH(n + 2);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  }
+  ambient(x) {
+    if (REDUCED) return 0;
+    const t = this.time;
+    return 4 * Math.sin(x * 0.03 + t * 1.7) + 2.5 * Math.sin(x * 0.071 - t * 1.13) + 1.5 * Math.sin(x * 0.13 + t * 2.3);
+  }
+  surfaceY(u) {
+    return this.baseline - Math.max(3, this.springH(u) + this.ambient(this.xOf(u)));
   }
   ballX() {
     return this.mode === 'drag' ? this.sx : this.xOf(this.ball);
+  }
+  get showBall() {
+    return this.enabled || this.mode !== 'idle';
   }
 
   // ---- simulation --------------------------------------------------------
@@ -173,9 +195,7 @@ export class NumberBar {
     this.last = t;
     const busy = this.step(dt);
     this.draw();
-    if (busy) {
-      this.raf = requestAnimationFrame((t2) => this.frame(t2));
-    }
+    if (busy) this.raf = requestAnimationFrame((t2) => this.frame(t2));
   }
 
   zoomStep(dt) {
@@ -185,7 +205,10 @@ export class NumberBar {
   }
 
   step(dt) {
-    let busy = false;
+    // The ambient ripple and sparkles keep the loop alive unless the
+    // player prefers reduced motion.
+    let busy = !REDUCED;
+    this.time += dt;
 
     if (this.mode === 'drag') {
       busy = true;
@@ -195,7 +218,7 @@ export class NumberBar {
       const speed = ex * ex * Math.min(this.half * CHASE, MAX_SPEED);
       this.cam = clamp(this.cam + Math.sign(frac) * speed * dt, -MAX_REACH, MAX_REACH);
       this.zoomStep(dt);
-      this.ball = this.cam + (this.sx - this.w / 2) / this.ppu;
+      this.ball = this.uOf(this.sx);
       this.lift += (1 - this.lift) * follow(10, dt);
     } else if (this.mode === 'key') {
       busy = true;
@@ -220,34 +243,60 @@ export class NumberBar {
       }
     }
 
-    // bar springs
+    // spring nodes
     const ppu = this.ppu;
     const sigma = Math.max(1.1, 30 / ppu);
-    const lo = Math.floor(this.cam - this.half - 3);
-    const hi = Math.ceil(this.cam + this.half + 3);
+    const lo = Math.floor(this.cam - this.half - 4);
+    const hi = Math.ceil(this.cam + this.half + 4);
     const peak = this.maxH;
     for (let n = lo; n <= hi; n++) {
       const rest = this.restFor(n);
       const d = n - this.ball;
       const target = rest + (peak - rest) * this.lift * Math.exp(-(d * d) / (2 * sigma * sigma));
-      let b = this.bars.get(n);
+      let b = this.nodes.get(n);
       if (!b) {
         b = { h: target, v: 0 };
-        this.bars.set(n, b);
+        this.nodes.set(n, b);
       }
       const a = STIFF * (target - b.h) - DAMP * b.v;
       b.v += a * dt;
       b.h = Math.max(2, b.h + b.v * dt);
       if (Math.abs(b.v) > 0.5 || Math.abs(target - b.h) > 0.3) busy = true;
     }
-    if (this.bars.size > 600) {
-      for (const n of this.bars.keys()) if (n < lo - 20 || n > hi + 20) this.bars.delete(n);
+    if (this.nodes.size > 600) {
+      for (const n of this.nodes.keys()) if (n < lo - 20 || n > hi + 20) this.nodes.delete(n);
     }
 
-    // ball rides on the bar beneath it
-    const targetY = this.baseline - this.heightAt(this.ball) - BALL_R - 3;
+    // sparkles
+    if (!REDUCED) {
+      this.ambientAcc += dt * 7;
+      while (this.ambientAcc >= 1) {
+        this.ambientAcc -= 1;
+        const u = this.uOf(PAD + Math.random() * (this.w - 2 * PAD));
+        this.spark(u, this.surfaceY(u) - 2, 'drift');
+      }
+      if (this.showBall && this.lift > 0.05) {
+        this.spawnAcc += dt * 48 * this.lift;
+        while (this.spawnAcc >= 1) {
+          this.spawnAcc -= 1;
+          const u = this.ball + gauss() * sigma * 0.7;
+          this.spark(u, this.surfaceY(u) - 2, 'crest');
+        }
+      }
+    }
+    for (const s of this.sparks) {
+      s.life += dt;
+      s.u += (s.vx * dt) / ppu;
+      s.y += s.vy * dt;
+      s.vy *= 1 - 1.4 * dt;
+    }
+    this.sparks = this.sparks.filter((s) => s.life < s.max);
+    if (this.sparks.length) busy = true;
+
+    // the ball rides on the wave
+    const targetY = this.surfaceY(this.ball) - BALL_R - 2;
     if (this.by === null) this.by = targetY;
-    this.by += (targetY - this.by) * follow(22, dt);
+    this.by += (targetY - this.by) * follow(30, dt);
     if (Math.abs(targetY - this.by) > 0.2) busy = true;
 
     // readout
@@ -259,6 +308,23 @@ export class NumberBar {
     }
 
     return busy;
+  }
+
+  spark(u, y, kind) {
+    if (this.sparks.length >= MAX_SPARKS) return;
+    const burst = kind === 'burst';
+    const drift = kind === 'drift';
+    this.sparks.push({
+      u,
+      y,
+      vx: (Math.random() - 0.5) * (burst ? 140 : 26),
+      vy: -(burst ? 50 + Math.random() * 130 : drift ? 8 + Math.random() * 22 : 25 + Math.random() * 60),
+      life: 0,
+      max: (drift ? 0.9 : 0.5) + Math.random() * (burst ? 0.7 : 1.0),
+      size: drift ? 0.8 + Math.random() * 1.4 : 1.2 + Math.random() * 2.4,
+      phase: Math.random() * Math.PI * 2,
+      white: Math.random() < 0.55,
+    });
   }
 
   animate(to, dur, ease, done) {
@@ -284,8 +350,12 @@ export class NumberBar {
     }
     this.animate({ ball: v, lift: 0 }, 0.22, easeOut, () => {
       for (let d = -3; d <= 3; d++) {
-        const b = this.bars.get(v + d);
+        const b = this.nodes.get(v + d);
         if (b) b.v -= 240 * Math.exp(-(d * d) / 3);
+      }
+      if (!REDUCED) {
+        const y = this.surfaceY(v);
+        for (let i = 0; i < 28; i++) this.spark(v + gauss() * 0.4, y, 'burst');
       }
       const accepted = this.onDrop(this.center + v);
       this.animate({}, accepted ? 0.6 : 0.12, easeOut, () => this.goHome());
@@ -371,90 +441,183 @@ export class NumberBar {
 
     const base = this.baseline;
     const ppu = this.ppu;
-    const gap = clamp(ppu * 0.22, 0, 3);
-    const bw = Math.max(1, ppu - gap);
-    const radius = bw > 6 ? Math.min(4, bw / 2) : 0;
     const lo = Math.floor(this.cam - this.half - 2);
     const hi = Math.ceil(this.cam + this.half + 2);
     const fade = (x) => clamp((Math.min(x, w - x) - 2) / 28, 0, 1);
-    const showBall = this.enabled || this.mode !== 'idle';
+    const showBall = this.showBall;
     const bx = this.ballX();
-    const hoverU = Math.round(this.mode === 'key' ? this.kb : this.ball);
+    const by = this.by ?? base - BALL_R;
     const markerAt = new Map(this.markers.map((m) => [m.value - this.center, m]));
     const answerSet = new Set(this.answers.map((a) => a - this.center));
 
-    // glow behind the bell
+    // glow behind the crest
     if (showBall && this.lift > 0.01) {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
+      // an ellipse that fades out before it reaches the canvas top
       const gy = base - this.maxH * 0.45;
-      const rg = ctx.createRadialGradient(bx, gy, 0, bx, gy, 140);
-      rg.addColorStop(0, `rgba(255, 47, 180, ${0.32 * this.lift})`);
-      rg.addColorStop(1, 'rgba(255, 47, 180, 0)');
+      const ry = Math.min(gy - 2, 110);
+      ctx.translate(bx, gy);
+      ctx.scale(1.5, 1);
+      const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
+      rg.addColorStop(0, `rgba(255, 60, 190, ${0.3 * this.lift})`);
+      rg.addColorStop(1, 'rgba(255, 60, 190, 0)');
       ctx.fillStyle = rg;
-      ctx.fillRect(bx - 140, gy - 140, 280, 280);
+      ctx.fillRect(-ry, -ry, ry * 2, ry * 2);
       ctx.restore();
     }
 
-    // bars (and a faint reflection below the baseline)
-    const shapes = [];
-    for (let n = lo; n <= hi; n++) {
-      const x = this.xOf(n);
-      const a = fade(x);
-      if (a <= 0) continue;
-      const bh = this.bars.get(n)?.h ?? this.restFor(n);
-      let fill = this.grad;
-      let glow = null;
-      const m = markerAt.get(n);
-      if (n === 0) {
-        fill = NEON.ice;
-        glow = 'rgba(200, 240, 255, 0.9)';
-      } else if (m) {
-        fill = c[m.kind] || NEON.ice;
-        glow = fill;
-      } else if (answerSet.has(n)) {
-        fill = c.correct;
-        glow = c.correct;
-      } else if (this.showPrimes && isPrime(this.center + n)) {
-        fill = c.correct;
-      }
-      shapes.push({ n, x, a, bh, fill });
-      ctx.globalAlpha = a;
-      ctx.fillStyle = fill;
-      if (glow) {
-        ctx.shadowColor = glow;
-        ctx.shadowBlur = 14;
-      }
-      ctx.beginPath();
-      if (radius && ctx.roundRect) ctx.roundRect(x - bw / 2, base - bh, bw, bh, [radius, radius, 0, 0]);
-      else ctx.rect(x - bw / 2, base - bh, bw, bh);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      if (showBall && n === hoverU && this.lift > 0.05 && n !== 0 && !m) {
-        ctx.globalAlpha = a * this.lift * 0.85;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(x - bw / 2, base - bh, bw, Math.min(4, bh));
-      }
-    }
-    for (const s of shapes) {
-      ctx.globalAlpha = s.a * 0.13;
-      ctx.fillStyle = s.fill;
-      ctx.fillRect(s.x - bw / 2, base + 2, bw, Math.min(30, s.bh * 0.35));
-    }
+    // the wave
+    const pts = [];
+    for (let x = 0; x <= w + 3; x += 3) pts.push([x, this.surfaceY(this.uOf(x))]);
+
+    ctx.beginPath();
+    ctx.moveTo(0, base);
+    for (const [x, y] of pts) ctx.lineTo(x, y);
+    ctx.lineTo(w, base);
+    ctx.closePath();
+    ctx.fillStyle = this.fill;
+    ctx.fill();
+
+    // reflection under the baseline
+    ctx.beginPath();
+    ctx.moveTo(0, base);
+    for (const [x, y] of pts) ctx.lineTo(x, base + (base - y) * 0.28);
+    ctx.lineTo(w, base);
+    ctx.closePath();
+    ctx.globalAlpha = 0.14;
+    ctx.fill();
     ctx.globalAlpha = 1;
 
-    // baseline
+    // glowing crest line
+    ctx.save();
+    ctx.beginPath();
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.strokeStyle = '#ffd0f0';
+    ctx.lineWidth = 2;
+    ctx.lineJoin = 'round';
+    ctx.shadowColor = '#ff2fb4';
+    ctx.shadowBlur = 14;
+    ctx.stroke();
+    ctx.restore();
+
+    // soften both ends
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-out';
+    for (const [x0, x1] of [[0, 34], [w, w - 34]]) {
+      const eg = ctx.createLinearGradient(x0, 0, x1, 0);
+      eg.addColorStop(0, 'rgba(0,0,0,1)');
+      eg.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = eg;
+      ctx.fillRect(Math.min(x0, x1), 0, 34, h);
+    }
+    ctx.restore();
+
+    // baseline with a dot at each whole number
     const lg = ctx.createLinearGradient(0, 0, w, 0);
-    lg.addColorStop(0, 'rgba(45, 226, 255, 0)');
-    lg.addColorStop(0.5, 'rgba(255, 47, 180, 0.7)');
-    lg.addColorStop(1, 'rgba(45, 226, 255, 0)');
+    lg.addColorStop(0, 'rgba(255, 47, 180, 0)');
+    lg.addColorStop(0.5, 'rgba(255, 120, 210, 0.8)');
+    lg.addColorStop(1, 'rgba(255, 47, 180, 0)');
     ctx.fillStyle = lg;
     ctx.fillRect(0, base, w, 1.5);
+    if (ppu >= 5) {
+      ctx.fillStyle = 'rgba(255, 190, 235, 0.55)';
+      for (let n = lo; n <= hi; n++) {
+        const x = this.xOf(n);
+        const a = fade(x);
+        if (a <= 0) continue;
+        ctx.globalAlpha = a * 0.8;
+        ctx.beginPath();
+        ctx.arc(x, base + 0.75, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // stems: primes (after the game), guesses, answer and N
+    const stem = (u, color, width, glow) => {
+      const x = this.xOf(u);
+      const a = fade(x);
+      if (a <= 0) return null;
+      const y = this.surfaceY(u);
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = glow;
+      ctx.beginPath();
+      ctx.moveTo(x, base);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, width + 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.globalAlpha = 1;
+      return { x, y };
+    };
+    if (this.showPrimes) {
+      for (let n = lo; n <= hi; n++) {
+        if (n !== 0 && !markerAt.has(n) && !answerSet.has(n) && isPrime(this.center + n)) stem(n, c.correct, 1.5, 6);
+      }
+    }
+    const labelStep = STEPS.find((s) => s * ppu >= 42) ?? 200;
+    ctx.font = '700 11px Outfit, ui-sans-serif, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const stacked = { left: 0, right: 0 };
+    for (const m of this.markers) {
+      const u = m.value - this.center;
+      const x = this.xOf(u);
+      const color = c[m.kind] || '#fff';
+      if (x < PAD - 10 || x > w - PAD + 10) {
+        const side = x < w / 2 ? 'left' : 'right';
+        this.edgeArrow(side, base - 50 - stacked[side] * 20, String(m.value), color);
+        stacked[side] += 1;
+        continue;
+      }
+      const p = stem(u, color, 2, 10);
+      if (p && (labelStep > 1 || !this.enabled)) {
+        ctx.fillStyle = color;
+        ctx.fillText(String(m.value), p.x, p.y - 10);
+      }
+    }
+    for (const u of answerSet) {
+      const p = markerAt.has(u) ? { x: this.xOf(u), y: this.surfaceY(u) } : stem(u, c.correct, 2, 10);
+      if (!p) continue;
+      ctx.strokeStyle = c.correct;
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = c.correct;
+      ctx.shadowBlur = 12;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      if (!markerAt.has(u)) {
+        ctx.fillStyle = c.correct;
+        ctx.fillText(String(this.center + u), p.x, p.y - 14);
+      }
+    }
+    stem(0, '#ffffff', 2, 12);
+
+    // hovered position: a faint line from the ball to the baseline
+    if (showBall && this.lift > 0.05) {
+      const hx = this.xOf(Math.round(this.mode === 'key' ? this.kb : this.ball));
+      ctx.globalAlpha = this.lift * 0.6;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 4]);
+      ctx.beginPath();
+      ctx.moveTo(hx, by + BALL_R);
+      ctx.lineTo(hx, base);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+    }
 
     // tick labels
-    const labelStep = STEPS.find((s) => s * ppu >= 42) ?? 200;
     const xN = this.xOf(0);
-    ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.font = '600 11px Outfit, ui-sans-serif, system-ui, sans-serif';
     ctx.fillStyle = c.label;
@@ -472,69 +635,49 @@ export class NumberBar {
     ctx.font = '800 15px Outfit, ui-sans-serif, system-ui, sans-serif';
     if (xN >= PAD - 6 && xN <= w - PAD + 6) {
       ctx.fillStyle = '#ffffff';
-      ctx.shadowColor = NEON.pink;
+      ctx.shadowColor = '#ff2fb4';
       ctx.shadowBlur = 10;
       ctx.fillText(String(this.center), xN, base + 10);
       ctx.shadowBlur = 0;
     } else {
-      this.edgeArrow(xN < w / 2 ? 'left' : 'right', base - 24, String(this.center), '#ffffff', 0);
+      this.edgeArrow(xN < w / 2 ? 'left' : 'right', base - 24, String(this.center), '#ffffff');
     }
 
-    // guess markers
-    const stacked = { left: 0, right: 0 };
-    ctx.font = '700 11px Outfit, ui-sans-serif, system-ui, sans-serif';
-    for (const m of this.markers) {
-      const u = m.value - this.center;
-      const x = this.xOf(u);
-      const color = c[m.kind] || '#fff';
-      if (x < PAD - 10 || x > w - PAD + 10) {
-        const side = x < w / 2 ? 'left' : 'right';
-        this.edgeArrow(side, base - 50 - stacked[side] * 20, String(m.value), color, stacked[side]);
-        stacked[side] += 1;
-        continue;
+    // sparkles
+    if (this.sparks.length) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.lineCap = 'round';
+      for (const s of this.sparks) {
+        const x = this.xOf(s.u);
+        const a = Math.sin((Math.PI * s.life) / s.max) * (0.65 + 0.35 * Math.sin(s.phase + s.life * 16)) * fade(x);
+        if (a <= 0.01) continue;
+        const r = s.size;
+        ctx.globalAlpha = a;
+        ctx.strokeStyle = s.white ? '#ffffff' : '#ffb8ea';
+        ctx.lineWidth = Math.max(0.8, r * 0.45);
+        ctx.beginPath();
+        ctx.moveTo(x - r * 2.2, s.y);
+        ctx.lineTo(x + r * 2.2, s.y);
+        ctx.moveTo(x, s.y - r * 2.2);
+        ctx.lineTo(x, s.y + r * 2.2);
+        ctx.stroke();
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(x, s.y, r * 0.6, 0, Math.PI * 2);
+        ctx.fill();
       }
-      const top = base - (this.bars.get(u)?.h ?? this.restFor(u));
-      ctx.fillStyle = color;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(x, top - 8, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.textBaseline = 'alphabetic';
-      if (labelStep > 1 || !this.enabled) ctx.fillText(String(m.value), x, top - 17);
-      ctx.textBaseline = 'top';
-    }
-
-    // answer rings
-    for (const u of answerSet) {
-      const x = this.xOf(u);
-      const top = base - (this.bars.get(u)?.h ?? this.restFor(u));
-      ctx.strokeStyle = c.correct;
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = c.correct;
-      ctx.shadowBlur = 12;
-      ctx.beginPath();
-      ctx.arc(x, top - 10, 7, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.shadowBlur = 0;
-      if (!markerAt.has(u)) {
-        ctx.fillStyle = c.correct;
-        ctx.textBaseline = 'alphabetic';
-        ctx.fillText(String(this.center + u), x, top - 22);
-        ctx.textBaseline = 'top';
-      }
+      ctx.restore();
     }
 
     if (!showBall) return;
 
-    // ball
-    const by = this.by ?? base - BALL_R;
+    // ball: white / light grey
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     const halo = ctx.createRadialGradient(bx, by, BALL_R * 0.6, bx, by, BALL_R * 3);
-    halo.addColorStop(0, `rgba(255, 47, 180, ${0.35 + 0.25 * this.lift})`);
-    halo.addColorStop(1, 'rgba(255, 47, 180, 0)');
+    halo.addColorStop(0, `rgba(255, 255, 255, ${0.22 + 0.18 * this.lift})`);
+    halo.addColorStop(1, 'rgba(255, 255, 255, 0)');
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(bx, by, BALL_R * 3, 0, Math.PI * 2);
@@ -543,18 +686,18 @@ export class NumberBar {
 
     const sphere = ctx.createRadialGradient(bx - 4, by - 5, 1, bx, by, BALL_R);
     sphere.addColorStop(0, '#ffffff');
-    sphere.addColorStop(0.35, '#ff7ad9');
-    sphere.addColorStop(1, '#c3128a');
+    sphere.addColorStop(0.45, '#ecebf1');
+    sphere.addColorStop(1, '#a6a3b2');
     ctx.fillStyle = sphere;
+    ctx.shadowColor = 'rgba(255, 255, 255, 0.7)';
+    ctx.shadowBlur = 12;
     ctx.beginPath();
     ctx.arc(bx, by, BALL_R, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255, 190, 240, 0.8)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
-  edgeArrow(side, y, text, color, _i) {
+  edgeArrow(side, y, text, color) {
     const { ctx, w } = this;
     const dir = side === 'left' ? -1 : 1;
     const ex = side === 'left' ? 12 : w - 12;
