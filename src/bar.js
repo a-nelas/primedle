@@ -3,7 +3,7 @@ import { isPrime } from './primes.js';
 const PAD = 22; // px kept free at each end
 const BALL_R = 14;
 const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
-const CLEAR = 14; // gap between the floor (a straight invisible line) and the highest crest
+const CLEAR = 26; // gap between the floor (a straight invisible line) and the highest crest
 const BEND = 9; // px the floor gives way under the ball when it's pulled further down
 const BEND_K = 260; // floor spring: stiffness (a touch springy so it settles back)
 const BEND_D = 2 * Math.sqrt(BEND_K) * 0.55;
@@ -881,7 +881,7 @@ export class NumberBar {
       g.globalCompositeOperation = 'lighter';
       // a segment of the floor, bright under the ball and fading out, with a
       // shallow dip where the ball pushes it down
-      const span = 34 + 40 * (1 - f) * (f > hold ? 1 : 0);
+      const span = 60 + 50 * (1 - f) * (f > hold ? 1 : 0);
       const ly = this.floorY + BALL_R + 1;
       const bend = Math.max(0, this.bend);
       const line = (off, rgb, width, alpha) => {
@@ -893,7 +893,7 @@ export class NumberBar {
         g.lineWidth = width;
         g.beginPath();
         for (let dx = -span; dx <= span; dx += 2) {
-          const yy = ly + bend * Math.exp(-(dx * dx) / (2 * 20 * 20));
+          const yy = ly + bend * Math.exp(-(dx * dx) / (2 * 26 * 26));
           if (dx === -span) g.moveTo(x + dx + off, yy);
           else g.lineTo(x + dx + off, yy);
         }
