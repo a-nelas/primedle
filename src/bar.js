@@ -16,8 +16,15 @@ const MAX_KEY = 54;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const MAX_SPARKS = 120;
-const SPARK_COUNT = 46; // roughly how many twinkle at once
+const MAX_SPARKS = 60;
+const SPARK_COUNT = 20; // roughly how many twinkle at once
+// low-poly sparkle shapes (unit vertices)
+const SHAPES = [
+  [[0, -1.6], [1, 0], [0, 1.6], [-1, 0]], // diamond
+  [[0, -1.3], [1.15, 0.8], [-1.15, 0.8]], // triangle
+  [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
+  Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
+];
 const TAP_SLOP = 8; // px a tap may move and still count as a click
 const TAP_TIME = 450; // ms
 
@@ -68,6 +75,7 @@ export class NumberBar {
     this.showPrimes = false;
     this.nodes = new Map(); // unit -> { h, v }
     this.sparks = [];
+    this.sparkLayer = document.createElement('canvas');
     this.spawnAcc = 0;
     this.tween = null;
     this.raf = 0;
@@ -130,15 +138,6 @@ export class NumberBar {
     this.canvas.width = Math.round(r.width * dpr);
     this.canvas.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    const top = this.baseline - this.maxH;
-    const fill = this.ctx.createLinearGradient(0, this.baseline, 0, top);
-    fill.addColorStop(0, 'rgba(150, 20, 120, 0.10)');
-    fill.addColorStop(0.1, 'rgba(255, 47, 180, 0.45)');
-    fill.addColorStop(0.35, 'rgba(255, 79, 195, 0.85)');
-    fill.addColorStop(0.7, '#ff9ddf');
-    fill.addColorStop(1, '#fff0fa');
-    this.fill = fill;
 
     this.buildSprites();
     this.by = null;
@@ -409,10 +408,28 @@ export class NumberBar {
       inside: Math.random(), // fraction of the wave's depth, used when dy ≥ 0
       life: startAt * max,
       max,
-      size: 0.8 + Math.random() * 1.9,
+      size: 0.8 + Math.random() * 0.9,
+      shape: Math.floor(Math.random() * SHAPES.length),
+      rot: Math.random() < 0.5 ? 0 : Math.random() * Math.PI,
       phase: Math.random() * Math.PI * 2,
       white: Math.random() < 0.55,
     });
+  }
+
+  static poly(g, s, x, y, color, scale = 1) {
+    const cos = Math.cos(s.rot);
+    const sin = Math.sin(s.rot);
+    const r = s.size * scale;
+    g.fillStyle = color;
+    g.beginPath();
+    SHAPES[s.shape].forEach(([px, py], i) => {
+      const X = x + (px * cos - py * sin) * r;
+      const Y = y + (px * sin + py * cos) * r;
+      if (i) g.lineTo(X, Y);
+      else g.moveTo(X, Y);
+    });
+    g.closePath();
+    g.fill();
   }
 
   sparkY(s) {
@@ -571,7 +588,17 @@ export class NumberBar {
     for (const [x, y] of pts) ctx.lineTo(x, y);
     ctx.lineTo(w, base);
     ctx.closePath();
-    ctx.fillStyle = this.fill;
+    // colour spreads sideways: richest around the ball, fading toward the sides
+    const p = clamp((showBall ? bx : w / 2) / w, 0, 1);
+    const fill = ctx.createLinearGradient(0, 0, w, 0);
+    fill.addColorStop(0, 'rgba(255, 47, 180, 0.08)');
+    fill.addColorStop(Math.max(0, p - 0.42), 'rgba(255, 47, 180, 0.5)');
+    fill.addColorStop(Math.max(0, p - 0.16), 'rgba(255, 79, 195, 0.88)');
+    fill.addColorStop(p, '#ff9ddf');
+    fill.addColorStop(Math.min(1, p + 0.16), 'rgba(255, 79, 195, 0.88)');
+    fill.addColorStop(Math.min(1, p + 0.42), 'rgba(255, 47, 180, 0.5)');
+    fill.addColorStop(1, 'rgba(255, 47, 180, 0.08)');
+    ctx.fillStyle = fill;
     ctx.fill();
 
     ctx.beginPath();
@@ -582,17 +609,6 @@ export class NumberBar {
     ctx.globalAlpha = 0.14;
     ctx.fill();
     ctx.globalAlpha = 1;
-
-    ctx.save();
-    ctx.beginPath();
-    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.strokeStyle = '#ffd0f0';
-    ctx.lineWidth = 2;
-    ctx.lineJoin = 'round';
-    ctx.shadowColor = '#ff2fb4';
-    ctx.shadowBlur = 14;
-    ctx.stroke();
-    ctx.restore();
 
     // soften both ends
     ctx.save();
@@ -711,31 +727,38 @@ export class NumberBar {
       }
     }
 
-    // sparkles
+    // sparkles: small CRT polygons drawn on their own layer so they get
+    // scanlines, an RGB fringe, pixel-snapped positions and stepped flicker
     if (this.sparks.length) {
-      ctx.save();
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.lineCap = 'round';
-      for (const s of this.sparks) {
-        const x = this.xOf(s.u);
-        const y = this.sparkY(s);
-        const a = Math.sin((Math.PI * s.life) / s.max) * (0.7 + 0.3 * Math.sin(s.phase + s.life * 9)) * fade(x);
-        if (a <= 0.01) continue;
-        const r = s.size;
-        ctx.globalAlpha = a;
-        ctx.strokeStyle = s.white ? '#ffffff' : '#ffb8ea';
-        ctx.lineWidth = Math.max(0.8, r * 0.45);
-        ctx.beginPath();
-        ctx.moveTo(x - r * 2.2, y);
-        ctx.lineTo(x + r * 2.2, y);
-        ctx.moveTo(x, y - r * 2.2);
-        ctx.lineTo(x, y + r * 2.2);
-        ctx.stroke();
-        ctx.fillStyle = '#ffffff';
-        ctx.beginPath();
-        ctx.arc(x, y, r * 0.6, 0, Math.PI * 2);
-        ctx.fill();
+      const L = this.sparkLayer;
+      if (L.width !== this.canvas.width || L.height !== this.canvas.height) {
+        L.width = this.canvas.width;
+        L.height = this.canvas.height;
       }
+      const g = L.getContext('2d');
+      const dpr = this.dpr || 1;
+      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.clearRect(0, 0, L.width, L.height);
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const s of this.sparks) {
+        const x = Math.round(this.xOf(s.u));
+        const y = Math.round(this.sparkY(s));
+        let a = Math.sin((Math.PI * s.life) / s.max) * (0.7 + 0.3 * Math.sin(s.phase + s.life * 9)) * fade(x);
+        a = Math.round(a * 4) / 4; // stepped, like a CRT phosphor
+        if (a <= 0) continue;
+        g.globalAlpha = a * 0.18;
+        NumberBar.poly(g, s, x, y, '#ff6ad0', 2.4); // soft halo
+        g.globalAlpha = a * 0.8;
+        NumberBar.poly(g, s, x - 1, y, 'rgb(255, 50, 140)');
+        NumberBar.poly(g, s, x + 1, y, 'rgb(60, 220, 255)');
+        g.globalAlpha = a;
+        NumberBar.poly(g, s, x, y, s.white ? '#f4f3f8' : '#ffc4ee');
+      }
+      NumberBar.scanlines(L, dpr);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.drawImage(L, 0, 0);
       ctx.restore();
     }
 
