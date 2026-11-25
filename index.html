@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Primedle</title>
+  <meta name="description" content="A daily number game: drag the ball onto the prime closest to today's number.">
+  <meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#121317" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="src/game.js"></script>
+</head>
+<body>
+  <header class="top">
+    <button id="help-btn" class="icon-btn" type="button" aria-label="How to play">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9.5"/><path d="M9.6 9.3a2.5 2.5 0 1 1 3.6 2.3c-.8.4-1.2.9-1.2 1.7v.4"/><circle cx="12" cy="16.9" r=".6" class="fill"/></svg>
+    </button>
+    <h1>Prime<span>dle</span></h1>
+    <button id="stats-btn" class="icon-btn" type="button" aria-label="Statistics">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>
+    </button>
+  </header>
+
+  <main>
+    <p class="puzzle" id="puzzle"></p>
+
+    <section class="daily" aria-label="Today's number">
+      <span class="daily-label">Today's number</span>
+      <span id="daily-number" class="daily-number">····</span>
+    </section>
+
+    <p class="prompt" id="prompt">Drag the ball onto the closest prime.</p>
+
+    <div class="bar-card">
+      <canvas id="bar" tabindex="0" aria-label="Number line. Use the arrow keys to move the ball and Enter to drop it."></canvas>
+    </div>
+
+    <div class="tries" id="tries" aria-label="Tries"></div>
+
+    <p class="hint" id="hint" aria-live="polite"></p>
+
+    <section id="result" class="result" hidden>
+      <h2 id="result-title"></h2>
+      <p id="result-text"></p>
+      <button id="share-btn" class="primary" type="button">Share result</button>
+      <p class="next">Next number in <span id="countdown">--:--:--</span></p>
+    </section>
+  </main>
+
+  <dialog id="help" aria-labelledby="help-title">
+    <form method="dialog" class="dlg">
+      <div class="dlg-head">
+        <h2 id="help-title">How to play</h2>
+        <button class="icon-btn" value="close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <p>Every day there's a new number. Find the <strong>prime closest to it</strong>.</p>
+      <p>Drag the ball along the number line and drop it on your guess. The farther you drag from today's number, the more the line stretches out to show.</p>
+      <p>You get <strong>3 tries</strong>. Each drop leaves a colored marker showing how close you were to the closest prime:</p>
+      <ul class="legend">
+        <li><span class="sw correct"></span>Correct</li>
+        <li><span class="sw hot"></span>Hot: 1–2 away</li>
+        <li><span class="sw warm"></span>Warm: 3–5 away</li>
+        <li><span class="sw cool"></span>Cool: 6–10 away</li>
+        <li><span class="sw cold"></span>Cold: more than 10 away</li>
+      </ul>
+      <p>From your second try on, you'll also see whether you got <strong>warmer</strong> or <strong>colder</strong>.</p>
+      <p class="small">A prime is a whole number greater than 1 that only divides by 1 and itself, like 2, 3, 5, 7, 11. Today's number is never prime. If two primes are equally close, either one counts.</p>
+      <button class="primary wide" value="close">Play</button>
+    </form>
+  </dialog>
+
+  <dialog id="stats" aria-labelledby="stats-title">
+    <form method="dialog" class="dlg">
+      <div class="dlg-head">
+        <h2 id="stats-title">Statistics</h2>
+        <button class="icon-btn" value="close" aria-label="Close">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="stat-grid">
+        <div><span id="st-played">0</span><small>Played</small></div>
+        <div><span id="st-win">0</span><small>Win %</small></div>
+        <div><span id="st-streak">0</span><small>Streak</small></div>
+        <div><span id="st-max">0</span><small>Best streak</small></div>
+      </div>
+      <h3>Wins by try</h3>
+      <div class="dist" id="st-dist"></div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

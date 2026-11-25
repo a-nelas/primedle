@@ -1,0 +1,9 @@
+{
+  "name": "primedle",
+  "private": true,
+  "type": "module",
+  "description": "A daily game: drag the ball onto the prime closest to today's number.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
