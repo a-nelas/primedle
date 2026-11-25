@@ -73,7 +73,18 @@ export class NumberBar {
     this.lift = 1; // bell height under the ball
     this.prox = 1; // 1 = ball on the floor, → 0 as it moves away; scales the bell
     this.press = 0; // 1 = the landed ball bends the wave down beneath it
-    this.fall = 0; // drop progress, 0 → 1
+    this.slide = 0; // drop: lock-on progress toward the target, 0 → 1
+    this.fall = 0; // drop: slam progress, 0 → 1
+    this.target = null; // drop: the whole number being hit
+    this.shake = 0; // impact aftermath, each 1 → 0
+    this.squash = 0;
+    this.boom = 0;
+    this.shakeT = 0;
+    this.sx = 0; // current screen-shake offset (px)
+    this.sy = 0;
+    this.impactAt = null; // { x, y } viewport px
+    this.ripples = []; // dips running outward along the wave from the impact
+    this.debris = []; // fragments thrown up by the impact
     this.from = null; // where a drop started (viewport px)
     this.bvx = null; // ball position in viewport px
     this.bvy = null;
@@ -413,7 +424,7 @@ export class NumberBar {
     const wall = this.floorY;
     if (this.mode === 'drop' && this.from) {
       const landY = R.top + this.surfaceY(this.ball) - BALL_R - 1;
-      this.bvx = this.from.x + (restX - this.from.x) * this.fall;
+      this.bvx = this.from.x + (restX - this.from.x) * this.slide;
       this.bvy = this.from.y + (landY - this.from.y) * this.fall;
       this.blocked = false;
     } else {
@@ -447,6 +458,43 @@ export class NumberBar {
       this.flash = Math.max(0, this.flash - dt / 0.4);
       busy = true;
     }
+    // impact aftermath
+    if (this.shake > 0 || this.squash > 0 || this.boom > 0 || this.ripples.length || this.debris.length) busy = true;
+    this.squash = Math.max(0, this.squash - dt / 0.22);
+    this.boom = Math.max(0, this.boom - dt / 0.45);
+    this.shake = Math.max(0, this.shake - dt / 0.34);
+    this.shakeT -= dt;
+    if (this.shake <= 0) {
+      this.sx = this.sy = 0;
+    } else if (this.shakeT <= 0) {
+      // stepped, mostly vertical jolts, like a heavy machine
+      this.shakeT = 0.034;
+      this.sx = Math.round((Math.random() * 2 - 1) * 3 * this.shake);
+      this.sy = Math.round((Math.random() * 2 - 1) * 8 * this.shake);
+    }
+    const shift = this.sx || this.sy ? `translate(${this.sx}px, ${this.sy}px)` : '';
+    if (this.canvas.parentElement.style.transform !== shift) this.canvas.parentElement.style.transform = shift;
+    for (const r of this.ripples) {
+      r.t += dt;
+      const front = Math.min(28, Math.floor(r.t * 30));
+      for (let d = r.done + 1; d <= front; d++) {
+        for (const n of [r.v - d, r.v + d]) {
+          const b = this.nodes.get(n);
+          if (b) b.v -= 170 * Math.exp(-d / 5);
+        }
+      }
+      r.done = Math.max(r.done, front);
+    }
+    this.ripples = this.ripples.filter((r) => r.done < 28);
+    for (const p of this.debris) {
+      p.life += dt;
+      p.vy += 1500 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.rot += p.spin * dt;
+    }
+    this.debris = this.debris.filter((p) => p.life < p.max);
+
     // the wave reaches up toward the ball: tall when it's near, low when far
     this.prox = Math.exp(-Math.max(0, wall - this.bvy) / (REACH * this.maxH));
 
@@ -512,30 +560,77 @@ export class NumberBar {
     this.kick();
   }
 
-  /** Drop the ball on the whole number under it and score it. */
+  /**
+   * Drop the ball on the whole number under it and score it: it locks on
+   * (snaps across to the number), holds for a beat, then slams straight down.
+   */
   drop(u) {
     const v = Math.round(u);
     if (v === 0) return; // N itself is never the answer; ignore
     this.mode = 'drop';
+    this.target = v;
     this.from = { x: this.bvx ?? 0, y: this.bvy ?? 0 };
+    this.slide = 0;
     this.fall = 0;
-    // fall: the bell flattens and the wave bends down where the ball lands
-    this.animate({ ball: v, fall: 1, lift: 0, press: 1 }, 0.32, easeIn, () => {
-      for (let d = -2; d <= 2; d++) {
-        const b = this.nodes.get(v + d);
-        if (b) b.v -= 90 * Math.exp(-(d * d) / 2);
-      }
-      const accepted = this.onDrop(this.center + v);
-      this.animate({}, accepted ? 0.7 : 0.15, easeOut, () => {
-        if (!this.enabled) {
-          this.mode = 'idle';
-          this.set({});
-          return;
-        }
-        this.animate({ lift: 1, press: 0 }, 0.5, easeInOut, () => {
-          this.mode = 'idle';
-          this.from = null;
+    const linear = (t) => t;
+    this.animate({ ball: v, slide: 1 }, 0.07, linear, () =>
+      this.animate({}, 0.05, linear, () =>
+        // the bell collapses and the wave bends down as it slams in
+        this.animate({ fall: 1, lift: 0, press: 1 }, 0.12, easeIn, () => this.impact(v)),
+      ),
+    );
+  }
+
+  impact(v) {
+    for (let d = -2; d <= 2; d++) {
+      const b = this.nodes.get(v + d);
+      if (b) b.v -= 280 * Math.exp(-(d * d) / 2);
+    }
+    this.squash = 1;
+    this.boom = 1;
+    this.impactAt = { x: this.bvx, y: this.bvy + BALL_R };
+    if (!REDUCED) {
+      this.ripples.push({ v, t: 0, done: 2 });
+      this.shake = 1;
+      this.shakeT = 0.045;
+      this.sx = 0;
+      this.sy = 8; // first jolt goes down with the ball
+      for (let i = 0; i < 14; i++) {
+        const a = -Math.PI / 2 + (Math.random() * 2 - 1) * 1.1;
+        const sp = 260 + Math.random() * 360;
+        this.debris.push({
+          x: this.impactAt.x + (Math.random() * 2 - 1) * 8,
+          y: this.impactAt.y,
+          vx: Math.cos(a) * sp,
+          vy: Math.sin(a) * sp,
+          rot: Math.random() * Math.PI,
+          spin: (Math.random() * 2 - 1) * 14,
+          size: 1.1 + Math.random() * 1.4,
+          shape: Math.floor(Math.random() * SHAPES.length),
+          life: 0,
+          max: 0.45 + Math.random() * 0.35,
+          white: Math.random() < 0.5,
         });
+      }
+      // a brief brightness pop on the whole scene
+      const game = this.canvas.parentElement;
+      game.classList.remove('impact');
+      void game.offsetWidth;
+      game.classList.add('impact');
+    }
+    this.kick();
+    const accepted = this.onDrop(this.center + v);
+    this.animate({}, accepted ? 0.7 : 0.15, easeOut, () => {
+      if (!this.enabled) {
+        this.mode = 'idle';
+        this.target = null;
+        this.set({});
+        return;
+      }
+      this.animate({ lift: 1, press: 0 }, 0.5, easeInOut, () => {
+        this.mode = 'idle';
+        this.from = null;
+        this.target = null;
       });
     });
   }
@@ -872,6 +967,76 @@ export class NumberBar {
       }
     }
 
+    // lock-on brackets on the number being hit, until the ball lands
+    if (this.mode === 'drop' && this.target !== null && this.fall < 1) {
+      const tx = R.left + this.xOf(this.target);
+      const ty = R.top + this.surfaceY(this.target);
+      const on = this.slide < 1 ? Math.floor(performance.now() / 45) % 2 === 0 : true;
+      if (on) {
+        const k = 11;
+        const c = 5;
+        const brackets = (dx, color) => {
+          g.strokeStyle = color;
+          g.lineWidth = 1.5;
+          g.beginPath();
+          for (const [qx, qy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const cx = tx + dx + qx * k;
+            const cy = ty + qy * k;
+            g.moveTo(cx, cy - qy * c);
+            g.lineTo(cx, cy);
+            g.lineTo(cx - qx * c, cy);
+          }
+          g.stroke();
+        };
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        brackets(-1.2, 'rgba(255, 50, 140, 0.8)');
+        brackets(1.2, 'rgba(60, 220, 255, 0.7)');
+        brackets(0, '#ffffff');
+        g.restore();
+      }
+    }
+
+    // impact: a flat shockwave ring, a flash and flying fragments
+    if (this.impactAt && this.boom > 0.01) {
+      const { x: ix, y: iy } = this.impactAt;
+      const p = 1 - this.boom;
+      const k = Math.round(this.boom * 4) / 4; // stepped fade
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      const fl = g.createRadialGradient(ix, iy, 0, ix, iy, 70);
+      fl.addColorStop(0, `rgba(255, 255, 255, ${0.8 * this.boom ** 2})`);
+      fl.addColorStop(1, 'rgba(255, 120, 210, 0)');
+      g.fillStyle = fl;
+      g.fillRect(ix - 70, iy - 70, 140, 140);
+      const r = 10 + 170 * easeOut(p);
+      for (const [dx, color] of [[-2, 'rgb(255, 50, 140)'], [2, 'rgb(60, 220, 255)'], [0, '#ffffff']]) {
+        g.globalAlpha = k * (dx ? 0.7 : 1);
+        g.strokeStyle = color;
+        g.lineWidth = dx ? 1.5 : 2;
+        g.beginPath();
+        g.ellipse(ix + dx, iy, r, r * 0.22, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.restore();
+    }
+    if (this.debris.length) {
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      for (const d of this.debris) {
+        const a = Math.round((1 - d.life / d.max) * 4) / 4;
+        if (a <= 0) continue;
+        const px = Math.round(d.x);
+        const py = Math.round(d.y);
+        g.globalAlpha = a * 0.8;
+        NumberBar.poly(g, d, px - 1, py, 'rgb(255, 50, 140)');
+        NumberBar.poly(g, d, px + 1, py, 'rgb(60, 220, 255)');
+        g.globalAlpha = a;
+        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : '#ffc4ee');
+      }
+      g.restore();
+    }
+
     // the invisible wall lights up where the ball pushes on it
     const f = this.flash;
     const hold = this.blocked ? 0.22 + 0.25 * clamp(this.bend / BEND, 0, 1) : 0;
@@ -919,7 +1084,18 @@ export class NumberBar {
     // ball, CRT style
     if (this.ballSprite) {
       const S = this.ballSprite;
-      g.drawImage(S.canvas, x - S.size / 2, y - S.size / 2, S.size, S.size);
+      let kx = 1;
+      let ky = 1;
+      if (this.mode === 'drop' && this.fall > 0 && this.fall < 1) {
+        kx = 1 - 0.14 * this.fall; // stretched by the speed
+        ky = 1 + 0.22 * this.fall;
+      } else if (this.squash > 0) {
+        const q = Math.round(this.squash * 3) / 3; // snaps back in steps
+        kx = 1 + 0.38 * q;
+        ky = 1 - 0.42 * q;
+      }
+      const cy = y + BALL_R * (1 - ky);
+      g.drawImage(S.canvas, x - (S.size * kx) / 2, cy - (S.size * ky) / 2, S.size * kx, S.size * ky);
       if (f > 0.01) {
         // it flares white on impact
         g.save();

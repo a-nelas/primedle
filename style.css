@@ -123,6 +123,13 @@ body::after {
   filter: blur(0.35px);
 }
 html.playing, html.playing * { cursor: none; }
+
+/* the ball's impact: a stepped brightness pop over the whole scene */
+.game.impact { animation: impact-pop 0.22s steps(3) both; }
+@keyframes impact-pop {
+  0% { filter: brightness(1.9) saturate(1.4) contrast(1.1); }
+  100% { filter: none; }
+}
 body { touch-action: none; }
 
 .tries {
@@ -151,4 +158,5 @@ body { touch-action: none; }
 @media (prefers-reduced-motion: reduce) {
   .crt { transition: none; }
   .readout.live .crt { animation: none; }
+  .game.impact { animation: none; }
 }
