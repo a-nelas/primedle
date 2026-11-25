@@ -62,14 +62,17 @@ body {
   filter: blur(0.3px);
   transition: opacity 0.18s, transform 0.18s;
 }
-.crt::after {
+/* CRT screen over everything: scanlines, a faint RGB triad mask and a vignette */
+body::after {
   content: "";
-  position: absolute;
-  inset: -4px 0;
-  background: repeating-linear-gradient(to bottom, rgb(0 0 0 / 0) 0 2px, rgb(10 6 18 / 0.5) 2px 3px);
-  -webkit-mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
-  mask-image: radial-gradient(closest-side, #000 35%, transparent 100%);
+  position: fixed;
+  inset: 0;
+  z-index: 10;
   pointer-events: none;
+  background:
+    repeating-linear-gradient(to bottom, rgb(0 0 0 / 0) 0 2px, rgb(0 0 0 / 0.38) 2px 3px),
+    repeating-linear-gradient(to right, rgb(255 0 80 / 0.035) 0 1px, rgb(0 255 140 / 0.025) 1px 2px, rgb(0 120 255 / 0.035) 2px 3px),
+    radial-gradient(ellipse at center, rgb(0 0 0 / 0) 55%, rgb(0 0 0 / 0.55) 100%);
 }
 .readout-value {
   font-size: 3.4rem;
@@ -104,6 +107,7 @@ body {
   display: block;
   width: 100%;
   height: 210px;
+  filter: blur(0.35px) saturate(1.15); /* soft phosphor edges */
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
@@ -122,6 +126,7 @@ body {
   border-radius: 50%;
   border: 2px solid rgb(185 169 214 / 0.4);
 }
+.try { filter: drop-shadow(-1px 0 rgb(255 50 140 / 0.6)) drop-shadow(1px 0 rgb(60 220 255 / 0.5)); }
 .try.used { border-color: transparent; }
 .try.correct { background: var(--correct); box-shadow: 0 0 10px var(--correct); }
 .try.hot { background: var(--hot); box-shadow: 0 0 10px var(--hot); }

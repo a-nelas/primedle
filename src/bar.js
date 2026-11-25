@@ -75,7 +75,6 @@ export class NumberBar {
     this.showPrimes = false;
     this.nodes = new Map(); // unit -> { h, v }
     this.sparks = [];
-    this.sparkLayer = document.createElement('canvas');
     this.spawnAcc = 0;
     this.tween = null;
     this.raf = 0;
@@ -145,19 +144,8 @@ export class NumberBar {
   }
 
   // ---- CRT sprites -------------------------------------------------------
-
-  /** Scanlines punched through whatever is on `c`, like the CSS readout. */
-  static scanlines(c, dpr) {
-    const g = c.getContext('2d');
-    g.save();
-    g.setTransform(1, 0, 0, 1, 0, 0);
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = 'rgba(0, 0, 0, 0.42)';
-    const step = Math.max(2, Math.round(3 * dpr));
-    const line = Math.max(1, Math.round(dpr));
-    for (let y = step - line; y < c.height; y += step) g.fillRect(0, y, c.width, line);
-    g.restore();
-  }
+  // Scanlines and the vignette come from a page-wide overlay (style.css);
+  // the sprites only carry the RGB fringe and glow.
 
   buildSprites() {
     const dpr = this.dpr || 1;
@@ -188,7 +176,6 @@ export class NumberBar {
     g.beginPath();
     g.arc(m, m, BALL_R, 0, Math.PI * 2);
     g.fill();
-    NumberBar.scanlines(b, dpr);
     this.ballSprite = { canvas: b, size };
 
     // daily number label
@@ -214,7 +201,6 @@ export class NumberBar {
     lg.shadowBlur = 8;
     lg.fillStyle = '#e9e8ee';
     lg.fillText(text, tw / 2, th / 2);
-    NumberBar.scanlines(l, dpr);
     this.labelSprite = { canvas: l, w: tw, h: th };
     this.kick();
   }
@@ -590,16 +576,45 @@ export class NumberBar {
     ctx.closePath();
     // colour spreads sideways: richest around the ball, fading toward the sides
     const p = clamp((showBall ? bx : w / 2) / w, 0, 1);
-    const fill = ctx.createLinearGradient(0, 0, w, 0);
-    fill.addColorStop(0, 'rgba(255, 47, 180, 0.08)');
-    fill.addColorStop(Math.max(0, p - 0.42), 'rgba(255, 47, 180, 0.5)');
-    fill.addColorStop(Math.max(0, p - 0.16), 'rgba(255, 79, 195, 0.88)');
-    fill.addColorStop(p, '#ff9ddf');
-    fill.addColorStop(Math.min(1, p + 0.16), 'rgba(255, 79, 195, 0.88)');
-    fill.addColorStop(Math.min(1, p + 0.42), 'rgba(255, 47, 180, 0.5)');
-    fill.addColorStop(1, 'rgba(255, 47, 180, 0.08)');
-    ctx.fillStyle = fill;
+    const fadeStops = (g, rgb, peak) => {
+      g.addColorStop(0, `rgba(${rgb}, 0)`);
+      g.addColorStop(Math.max(0, p - 0.34), `rgba(${rgb}, 0)`);
+      g.addColorStop(Math.max(0, p - 0.2), `rgba(${rgb}, ${0.18 * peak})`);
+      g.addColorStop(Math.max(0, p - 0.08), `rgba(${rgb}, ${0.8 * peak})`);
+      g.addColorStop(p, `rgba(${rgb}, ${peak})`);
+      g.addColorStop(Math.min(1, p + 0.08), `rgba(${rgb}, ${0.8 * peak})`);
+      g.addColorStop(Math.min(1, p + 0.2), `rgba(${rgb}, ${0.18 * peak})`);
+      g.addColorStop(Math.min(1, p + 0.34), `rgba(${rgb}, 0)`);
+      g.addColorStop(1, `rgba(${rgb}, 0)`);
+      return g;
+    };
+    const core = ctx.createLinearGradient(0, 0, w, 0);
+    core.addColorStop(0, 'rgba(255, 47, 180, 0)');
+    core.addColorStop(Math.max(0, p - 0.34), 'rgba(255, 47, 180, 0)');
+    core.addColorStop(Math.max(0, p - 0.2), 'rgba(255, 47, 180, 0.22)');
+    core.addColorStop(Math.max(0, p - 0.08), 'rgba(255, 79, 195, 0.85)');
+    core.addColorStop(p, '#ff9ddf');
+    core.addColorStop(Math.min(1, p + 0.08), 'rgba(255, 79, 195, 0.85)');
+    core.addColorStop(Math.min(1, p + 0.2), 'rgba(255, 47, 180, 0.22)');
+    core.addColorStop(Math.min(1, p + 0.34), 'rgba(255, 47, 180, 0)');
+    core.addColorStop(1, 'rgba(255, 47, 180, 0)');
+    ctx.fillStyle = core;
     ctx.fill();
+
+    // CRT colour fringe along the wave's edge (pink left, cyan right),
+    // fading out sideways with the colour
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineWidth = 1.4;
+    ctx.lineJoin = 'round';
+    for (const [dx, rgb, peak] of [[-1.6, '255, 50, 140', 0.55], [1.6, '60, 220, 255', 0.4]]) {
+      ctx.strokeStyle = fadeStops(ctx.createLinearGradient(0, 0, w, 0), rgb, peak);
+      ctx.beginPath();
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x + dx, y) : ctx.moveTo(x + dx, y)));
+      ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = core;
 
     ctx.beginPath();
     ctx.moveTo(0, base);
@@ -727,19 +742,12 @@ export class NumberBar {
       }
     }
 
-    // sparkles: small CRT polygons drawn on their own layer so they get
-    // scanlines, an RGB fringe, pixel-snapped positions and stepped flicker
+    // sparkles: small CRT polygons with an RGB fringe, pixel-snapped
+    // positions and stepped flicker (scanlines come from the page overlay)
     if (this.sparks.length) {
-      const L = this.sparkLayer;
-      if (L.width !== this.canvas.width || L.height !== this.canvas.height) {
-        L.width = this.canvas.width;
-        L.height = this.canvas.height;
-      }
-      const g = L.getContext('2d');
-      const dpr = this.dpr || 1;
-      g.setTransform(1, 0, 0, 1, 0, 0);
-      g.clearRect(0, 0, L.width, L.height);
-      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const g = ctx;
+      g.save();
+      g.globalCompositeOperation = 'lighter';
       for (const s of this.sparks) {
         const x = Math.round(this.xOf(s.u));
         const y = Math.round(this.sparkY(s));
@@ -754,12 +762,7 @@ export class NumberBar {
         g.globalAlpha = a;
         NumberBar.poly(g, s, x, y, s.white ? '#f4f3f8' : '#ffc4ee');
       }
-      NumberBar.scanlines(L, dpr);
-      ctx.save();
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.drawImage(L, 0, 0);
-      ctx.restore();
+      g.restore();
     }
 
     // ball, CRT style
