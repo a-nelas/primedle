@@ -2,7 +2,9 @@ import { isPrime } from './primes.js';
 
 const PAD = 22; // px kept free at each end
 const BALL_R = 14;
-const FLOAT = 20; // gap between the floating ball and the wave crest
+const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
+const CLEAR = 4; // gap between the floor (a straight invisible line) and the highest crest
+const REACH = 150; // px: how quickly the wave sinks as the ball moves away from the floor
 const BASE_HALF = 7; // units visible each side at rest
 // Pointer → number mapping. The camera follows the ball to ALPHA of its
 // distance from N and the view widens by BETA per unit, which gives
@@ -40,16 +42,21 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
  *
  * Positions are in "units": offsets from N. Each integer is a spring node
  * and the wave is a smooth curve through them, rising into a bell under the
- * ball. The ball floats above the wave and follows the pointer (mouse hover,
- * or a finger sliding); a click or tap drops it and scores the guess. The
- * camera (`cam`) catches up behind the ball and the view widens (`half`) the
- * farther it goes, so N stays on screen. The wave only moves when the pointer
- * does; sparkles twinkle across it on their own.
+ * ball. The ball lives on a full-screen overlay (`fx`) and follows the pointer
+ * anywhere on the page (mouse hover, or a finger sliding), but it can't pass
+ * below the wave: it stops at an invisible wall just above it, flashing on
+ * contact, and slides along at that height. Its x picks the number. A click
+ * or tap drops it and scores the guess. The camera (`cam`) catches up behind
+ * the ball and the view widens (`half`) the farther it goes, so N stays on
+ * screen. The wave only moves when the pointer does; sparkles twinkle across
+ * it on their own.
  */
 export class NumberBar {
-  constructor(canvas, { center, onDrop, onHover }) {
+  constructor(canvas, { center, onDrop, onHover, fx }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
+    this.fx = fx;
+    this.fxCtx = fx.getContext('2d');
     this.center = center;
     this.onDrop = onDrop;
     this.onHover = onHover || (() => {});
@@ -61,12 +68,19 @@ export class NumberBar {
     this.cam = 0;
     this.ball = 0;
     this.lift = 1; // bell height under the ball
-    this.float = 1; // 1 = floating above the wave, 0 = resting on it
+    this.prox = 1; // 1 = ball on the floor, → 0 as it moves away; scales the bell
     this.press = 0; // 1 = the landed ball bends the wave down beneath it
-    this.by = null; // smoothed ball y
-    this.px = 0; // raw pointer x
+    this.fall = 0; // drop progress, 0 → 1
+    this.from = null; // where a drop started (viewport px)
+    this.bvx = null; // ball position in viewport px
+    this.bvy = null;
+    this.mx = 0; // pointer in viewport px
+    this.my = 0;
+    this.blocked = false; // ball is pressed against the wall above the wave
+    this.flash = 0; // contact flash, 1 → 0
+    this.rect = null;
     this.engaged = false; // pointer is steering the ball
-    this.down = null; // { x, t, id, type } of the current press
+    this.down = null; // { x, y, t } of the current press
     this.kb = 0;
     this.mode = 'idle'; // idle | key | drop
     this.enabled = true;
@@ -84,13 +98,16 @@ export class NumberBar {
     this.readColors();
     new ResizeObserver(() => this.resize()).observe(canvas);
     document.fonts?.load(`24px ${CRT_FONT}`).then(() => this.buildSprites()).catch(() => {});
-    canvas.addEventListener('pointerdown', (e) => this.onDown(e));
-    canvas.addEventListener('pointermove', (e) => this.onMove(e));
-    canvas.addEventListener('pointerup', (e) => this.onUp(e));
-    canvas.addEventListener('pointercancel', () => this.disengage());
-    canvas.addEventListener('pointerleave', (e) => {
-      if (e.pointerType === 'mouse') this.disengage();
+    window.addEventListener('resize', () => this.resizeFx());
+    window.addEventListener('pointerdown', (e) => this.onDown(e));
+    window.addEventListener('pointermove', (e) => this.onMove(e));
+    window.addEventListener('pointerup', (e) => this.onUp(e));
+    window.addEventListener('pointercancel', () => {
+      this.down = null;
+      this.disengage();
     });
+    document.documentElement.addEventListener('mouseleave', () => this.disengage());
+    window.addEventListener('blur', () => this.disengage());
     canvas.addEventListener('keydown', (e) => this.onKey(e));
     canvas.addEventListener('blur', () => {
       if (this.mode === 'key') this.mode = 'idle';
@@ -110,9 +127,18 @@ export class NumberBar {
     if (!this.enabled && this.mode !== 'drop') {
       // game over: settle the view back on N with a flat wave
       this.engaged = false;
-      this.animate({ ball: 0, cam: 0, lift: 0, float: 0, press: 0 }, 0.6, easeInOut);
+      this.animate({ ball: 0, cam: 0, lift: 0, press: 0 }, 0.6, easeInOut);
     }
-    this.canvas.style.cursor = this.enabled ? 'crosshair' : 'default';
+    // while playing, the ball is the cursor
+    document.documentElement.classList.toggle('playing', this.enabled);
+    this.kick();
+  }
+
+  resizeFx() {
+    const dpr = window.devicePixelRatio || 1;
+    this.fx.width = Math.round(window.innerWidth * dpr);
+    this.fx.height = Math.round(window.innerHeight * dpr);
+    this.fxCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.kick();
   }
 
@@ -138,8 +164,8 @@ export class NumberBar {
     this.canvas.height = Math.round(r.height * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+    this.resizeFx();
     this.buildSprites();
-    this.by = null;
     this.kick();
   }
 
@@ -250,8 +276,14 @@ export class NumberBar {
   surfaceY(u) {
     return this.baseline - Math.max(3, this.springH(u));
   }
+  /** Where the bell (and the colour) is centred, in canvas x. */
   ballX() {
     return this.xOf(this.ball);
+  }
+  /** The floor: lowest the ball's centre may go (viewport px), a straight
+   *  line just above the highest the wave can rise. */
+  get floorY() {
+    return this.rect.top + this.baseline - this.maxH - CLEAR - BALL_R;
   }
   get showBall() {
     return this.enabled || this.mode === 'drop';
@@ -271,6 +303,7 @@ export class NumberBar {
     this.last = t;
     const busy = this.step(dt);
     this.draw();
+    this.drawFx();
     if (busy) this.raf = requestAnimationFrame((t2) => this.frame(t2));
   }
 
@@ -283,10 +316,12 @@ export class NumberBar {
 
   step(dt) {
     let busy = false;
+    const R = (this.rect = this.canvas.getBoundingClientRect());
+    const free = this.mode === 'idle' && this.engaged && this.enabled;
 
-    // the ball heads for its target; the camera catches up behind it
+    // the number under the ball heads for its target; the camera catches up
     let target = null;
-    if (this.mode === 'idle' && this.engaged && this.enabled) target = this.valueAt(this.px);
+    if (free) target = this.valueAt(this.mx - R.left);
     else if (this.mode === 'key') target = this.kb;
     if (target !== null) {
       this.ball += (target - this.ball) * follow(18, dt);
@@ -323,7 +358,7 @@ export class NumberBar {
     for (let n = lo; n <= hi; n++) {
       const rest = this.restFor(n);
       const d = n - this.ball;
-      const bell = (peak - rest) * this.lift * Math.exp(-(d * d) / (2 * sigma * sigma));
+      const bell = (peak - rest) * this.lift * this.prox * Math.exp(-(d * d) / (2 * sigma * sigma));
       const dent = rest * 0.75 * this.press * Math.exp(-(d * d) / (2 * dentSigma * dentSigma));
       const target = Math.max(2, rest + bell - dent);
       let b = this.nodes.get(n);
@@ -363,11 +398,36 @@ export class NumberBar {
       busy = true;
     }
 
-    // the ball floats above the wave
-    const targetY = this.surfaceY(this.ball) - BALL_R - 2 - FLOAT * this.float;
-    if (this.by === null) this.by = targetY;
-    this.by += (targetY - this.by) * follow(this.mode === 'drop' ? 60 : 30, dt);
-    if (Math.abs(targetY - this.by) > 0.2) busy = true;
+    // the ball, in viewport px: follows the pointer anywhere, but never
+    // below the floor just above the wave
+    const restX = R.left + this.xOf(this.ball);
+    const wall = this.floorY;
+    if (this.mode === 'drop' && this.from) {
+      const landY = R.top + this.surfaceY(this.ball) - BALL_R - 1;
+      this.bvx = this.from.x + (restX - this.from.x) * this.fall;
+      this.bvy = this.from.y + (landY - this.from.y) * this.fall;
+      this.blocked = false;
+    } else {
+      const tx = free ? this.mx : restX;
+      if (this.bvx === null) this.bvx = tx;
+      this.bvx += (tx - this.bvx) * follow(free ? 30 : 12, dt);
+      const ty = free ? this.my : wall - FLOAT;
+      if (this.bvy === null) this.bvy = ty;
+      this.bvy += (ty - this.bvy) * follow(free ? 30 : 12, dt);
+      if (this.bvy > wall) this.bvy = wall;
+      // pressed against the wall (a little hysteresis so it doesn't chatter)
+      const blocked = free && this.bvy >= wall - 0.5 && ty > wall - (this.blocked ? 6 : 0);
+      if (blocked && !this.blocked && this.flash < 0.4) this.flash = 1; // hit the wall
+      this.blocked = blocked;
+      if (this.blocked) busy = true;
+      if (Math.abs(tx - this.bvx) > 0.3 || Math.abs(Math.min(ty, wall) - this.bvy) > 0.3) busy = true;
+    }
+    if (this.flash > 0) {
+      this.flash = Math.max(0, this.flash - dt / 0.4);
+      busy = true;
+    }
+    // the wave reaches up toward the ball: tall when it's near, low when far
+    this.prox = Math.exp(-Math.max(0, wall - this.bvy) / REACH);
 
     // readout
     const live = this.enabled && (this.engaged || this.mode === 'key' || this.mode === 'drop');
@@ -436,9 +496,10 @@ export class NumberBar {
     const v = Math.round(u);
     if (v === 0) return; // N itself is never the answer; ignore
     this.mode = 'drop';
-    this.engaged = false;
+    this.from = { x: this.bvx ?? 0, y: this.bvy ?? 0 };
+    this.fall = 0;
     // fall: the bell flattens and the wave bends down where the ball lands
-    this.animate({ ball: v, float: 0, lift: 0, press: 1 }, 0.32, easeIn, () => {
+    this.animate({ ball: v, fall: 1, lift: 0, press: 1 }, 0.32, easeIn, () => {
       for (let d = -2; d <= 2; d++) {
         const b = this.nodes.get(v + d);
         if (b) b.v -= 90 * Math.exp(-(d * d) / 2);
@@ -450,8 +511,9 @@ export class NumberBar {
           this.set({});
           return;
         }
-        this.animate({ float: 1, lift: 1, press: 0 }, 0.5, easeInOut, () => {
+        this.animate({ lift: 1, press: 0 }, 0.5, easeInOut, () => {
           this.mode = 'idle';
+          this.from = null;
         });
       });
     });
@@ -459,13 +521,10 @@ export class NumberBar {
 
   // ---- input -------------------------------------------------------------
 
-  pointerX(e) {
-    return e.clientX - this.canvas.getBoundingClientRect().left;
-  }
-
-  engage(x) {
+  engage(e) {
     this.engaged = true;
-    this.px = x;
+    this.mx = e.clientX;
+    this.my = e.clientY;
     if (this.mode === 'key') this.mode = 'idle';
     this.kick();
   }
@@ -477,36 +536,30 @@ export class NumberBar {
   }
 
   onDown(e) {
-    if (!this.enabled || this.mode === 'drop') return;
+    if (!this.enabled || this.mode === 'drop' || e.button > 0) return;
     e.preventDefault();
     this.canvas.focus({ preventScroll: true });
-    const x = this.pointerX(e);
-    this.down = { x, t: performance.now(), id: e.pointerId };
-    if (e.pointerType !== 'mouse') {
-      try {
-        this.canvas.setPointerCapture(e.pointerId);
-      } catch {
-        /* pointer already gone */
-      }
-    }
-    this.engage(x);
+    this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
+    this.engage(e);
   }
 
   onMove(e) {
     if (!this.enabled || this.mode === 'drop') return;
     // mouse steers by hovering; touch and pen steer while pressed
-    if (e.pointerType === 'mouse' || this.down) this.engage(this.pointerX(e));
+    if (e.pointerType === 'mouse' || this.down) this.engage(e);
   }
 
   onUp(e) {
     const d = this.down;
     this.down = null;
     if (!d || !this.enabled || this.mode === 'drop') return;
-    const x = this.pointerX(e);
-    const isTap = Math.abs(x - d.x) <= TAP_SLOP && performance.now() - d.t <= TAP_TIME;
+    const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+    const isTap = moved <= TAP_SLOP && performance.now() - d.t <= TAP_TIME;
     if (isTap) {
       // mouse: drop where the ball (and readout) is; touch: where the tap was
-      this.drop(e.pointerType === 'mouse' ? this.ball : this.valueAt(x));
+      const rect = this.canvas.getBoundingClientRect();
+      if (e.pointerType !== 'mouse') this.bvx = e.clientX;
+      this.drop(e.pointerType === 'mouse' ? this.ball : this.valueAt(e.clientX - rect.left));
     } else if (e.pointerType !== 'mouse') {
       this.disengage(); // finger lifted after aiming: the ball stays floating there
     }
@@ -545,7 +598,6 @@ export class NumberBar {
     const fade = (x) => clamp((Math.min(x, w - x) - 2) / 28, 0, 1);
     const showBall = this.showBall;
     const bx = this.ballX();
-    const by = this.by ?? base - BALL_R;
     const markerAt = new Map(this.markers.map((m) => [m.value - this.center, m]));
     const answerSet = new Set(this.answers.map((a) => a - this.center));
 
@@ -558,7 +610,7 @@ export class NumberBar {
       ctx.translate(bx, gy);
       ctx.scale(1.5, 1);
       const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
-      rg.addColorStop(0, `rgba(255, 60, 190, ${0.28 * this.lift})`);
+      rg.addColorStop(0, `rgba(255, 60, 190, ${0.28 * this.lift * this.prox})`);
       rg.addColorStop(1, 'rgba(255, 60, 190, 0)');
       ctx.fillStyle = rg;
       ctx.fillRect(-ry, -ry, ry * 2, ry * 2);
@@ -713,21 +765,6 @@ export class NumberBar {
     }
     stem(0, '#ffffff', 2, 12);
 
-    // aim line from the ball to the whole number it would land on
-    if (showBall && this.float > 0.05) {
-      const hx = this.xOf(Math.round(this.mode === 'key' ? this.kb : this.ball));
-      ctx.globalAlpha = this.float * 0.55;
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 4]);
-      ctx.beginPath();
-      ctx.moveTo(hx, by + BALL_R + 3);
-      ctx.lineTo(hx, base);
-      ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.globalAlpha = 1;
-    }
-
     // daily number (the only digits on the bar), CRT style
     const xN = this.xOf(0);
     const L = this.labelSprite;
@@ -764,11 +801,88 @@ export class NumberBar {
       }
       g.restore();
     }
+  }
+
+  /** The ball, its aim line and the wall flash, on the full-screen overlay. */
+  drawFx() {
+    const g = this.fxCtx;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    g.clearRect(0, 0, vw, vh);
+    const R = this.rect;
+    if (!R || !this.w || !this.showBall || this.bvx === null) return;
+    const x = this.bvx;
+    const y = this.bvy;
+
+    // aim line from the ball down to the whole number it would land on
+    if (this.mode !== 'drop' && this.lift > 0.05) {
+      const hx = R.left + this.xOf(Math.round(this.mode === 'key' ? this.kb : this.ball));
+      const top = y + BALL_R + 3;
+      const bot = R.top + this.baseline;
+      if (bot > top) {
+        g.globalAlpha = this.lift * 0.55;
+        g.strokeStyle = '#ffffff';
+        g.lineWidth = 1;
+        g.setLineDash([3, 4]);
+        g.beginPath();
+        g.moveTo(hx, top);
+        g.lineTo(hx, bot);
+        g.stroke();
+        g.setLineDash([]);
+        g.globalAlpha = 1;
+      }
+    }
+
+    // the invisible wall lights up where the ball pushes on it
+    const f = this.flash;
+    const hold = this.blocked ? 0.22 : 0;
+    const a = Math.max(f, hold);
+    if (a > 0.01) {
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      // a straight segment of the floor, bright under the ball, fading out
+      const span = 34 + 40 * (1 - f) * (f > hold ? 1 : 0);
+      const ly = this.floorY + BALL_R + 1;
+      const line = (off, rgb, width, alpha) => {
+        const lg = g.createLinearGradient(x - span, 0, x + span, 0);
+        lg.addColorStop(0, `rgba(${rgb}, 0)`);
+        lg.addColorStop(0.5, `rgba(${rgb}, ${alpha})`);
+        lg.addColorStop(1, `rgba(${rgb}, 0)`);
+        g.fillStyle = lg;
+        g.fillRect(x - span + off, ly - width / 2, span * 2, width);
+      };
+      line(0, '255, 120, 210', 7, a * 0.25); // soft bloom
+      line(-1.5, '255, 50, 140', 1.6, a * 0.9);
+      line(1.5, '60, 220, 255', 1.6, a * 0.8);
+      line(0, '255, 255, 255', 1.2, a);
+      // the impact ring
+      if (f > 0.01) {
+        const r = BALL_R + 4 + 22 * (1 - f);
+        g.globalAlpha = f * 0.7;
+        g.strokeStyle = '#ffffff';
+        g.lineWidth = 1.5;
+        g.beginPath();
+        g.ellipse(x, y + BALL_R * 0.4, r, r * 0.55, 0, 0, Math.PI * 2);
+        g.stroke();
+      }
+      g.restore();
+    }
 
     // ball, CRT style
-    if (showBall && this.ballSprite) {
+    if (this.ballSprite) {
       const S = this.ballSprite;
-      ctx.drawImage(S.canvas, bx - S.size / 2, by - S.size / 2, S.size, S.size);
+      g.drawImage(S.canvas, x - S.size / 2, y - S.size / 2, S.size, S.size);
+      if (f > 0.01) {
+        // it flares white on impact
+        g.save();
+        g.globalCompositeOperation = 'lighter';
+        const glow = g.createRadialGradient(x, y, 0, x, y, BALL_R * 2.2);
+        glow.addColorStop(0, `rgba(255, 255, 255, ${0.75 * f})`);
+        glow.addColorStop(1, 'rgba(255, 255, 255, 0)');
+        g.fillStyle = glow;
+        g.fillRect(x - BALL_R * 2.2, y - BALL_R * 2.2, BALL_R * 4.4, BALL_R * 4.4);
+        g.restore();
+      }
     }
   }
 

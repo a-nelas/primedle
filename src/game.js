@@ -47,7 +47,7 @@ if (stats.lastWinKey !== key && stats.lastWinKey !== yesterdayKey(key)) stats.st
 
 // ---- game ----------------------------------------------------------------
 
-const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout });
+const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout, fx: $('fx') });
 
 function showReadout(v) {
   const live = v !== null;
