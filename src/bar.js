@@ -3,7 +3,10 @@ import { isPrime } from './primes.js';
 const PAD = 22; // px kept free at each end
 const BALL_R = 14;
 const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
-const CLEAR = 4; // gap between the floor (a straight invisible line) and the highest crest
+const CLEAR = 14; // gap between the floor (a straight invisible line) and the highest crest
+const BEND = 9; // px the floor gives way under the ball when it's pulled further down
+const BEND_K = 260; // floor spring: stiffness (a touch springy so it settles back)
+const BEND_D = 2 * Math.sqrt(BEND_K) * 0.55;
 const REACH = 0.55; // × maxH: how quickly the wave sinks as the ball moves away from the floor
 const BASE_HALF = 7; // units visible each side at rest
 // Pointer → number mapping. The camera follows the ball to ALPHA of its
@@ -78,6 +81,8 @@ export class NumberBar {
     this.my = 0;
     this.blocked = false; // ball is pressed against the wall above the wave
     this.flash = 0; // contact flash, 1 → 0
+    this.bend = 0; // how far the floor is bent down under the ball (px)
+    this.bendV = 0;
     this.rect = null;
     this.engaged = false; // pointer is steering the ball
     this.down = null; // { x, y, t } of the current press
@@ -418,13 +423,25 @@ export class NumberBar {
       const ty = free ? this.my : wall - FLOAT;
       if (this.bvy === null) this.bvy = ty;
       this.bvy += (ty - this.bvy) * follow(free ? 30 : 12, dt);
-      if (this.bvy > wall) this.bvy = wall;
-      // pressed against the wall (a little hysteresis so it doesn't chatter)
-      const blocked = free && this.bvy >= wall - 0.5 && ty > wall - (this.blocked ? 6 : 0);
+      // pulling further down bends the floor a little (eases toward BEND)
+      const push = free ? Math.max(0, ty - wall) : 0;
+      const bendT = BEND * (1 - Math.exp(-push / 70));
+      if (REDUCED) {
+        this.bend = bendT;
+        this.bendV = 0;
+      } else {
+        this.bendV += (BEND_K * (bendT - this.bend) - BEND_D * this.bendV) * dt;
+        this.bend += this.bendV * dt;
+      }
+      if (Math.abs(bendT - this.bend) > 0.05 || Math.abs(this.bendV) > 0.05) busy = true;
+      const limit = wall + Math.max(0, this.bend);
+      if (this.bvy > limit) this.bvy = limit;
+      // pressed against the floor (a little hysteresis so it doesn't chatter)
+      const blocked = free && this.bvy >= Math.min(wall, limit) - 0.5 && ty > wall - (this.blocked ? 6 : 0);
       if (blocked && !this.blocked && this.flash < 0.4) this.flash = 1; // hit the wall
       this.blocked = blocked;
       if (this.blocked) busy = true;
-      if (Math.abs(tx - this.bvx) > 0.3 || Math.abs(Math.min(ty, wall) - this.bvy) > 0.3) busy = true;
+      if (Math.abs(tx - this.bvx) > 0.3 || Math.abs(Math.min(ty, limit) - this.bvy) > 0.3) busy = true;
     }
     if (this.flash > 0) {
       this.flash = Math.max(0, this.flash - dt / 0.4);
@@ -857,21 +874,30 @@ export class NumberBar {
 
     // the invisible wall lights up where the ball pushes on it
     const f = this.flash;
-    const hold = this.blocked ? 0.22 : 0;
+    const hold = this.blocked ? 0.22 + 0.25 * clamp(this.bend / BEND, 0, 1) : 0;
     const a = Math.max(f, hold);
     if (a > 0.01) {
       g.save();
       g.globalCompositeOperation = 'lighter';
-      // a straight segment of the floor, bright under the ball, fading out
+      // a segment of the floor, bright under the ball and fading out, with a
+      // shallow dip where the ball pushes it down
       const span = 34 + 40 * (1 - f) * (f > hold ? 1 : 0);
       const ly = this.floorY + BALL_R + 1;
+      const bend = Math.max(0, this.bend);
       const line = (off, rgb, width, alpha) => {
         const lg = g.createLinearGradient(x - span, 0, x + span, 0);
         lg.addColorStop(0, `rgba(${rgb}, 0)`);
         lg.addColorStop(0.5, `rgba(${rgb}, ${alpha})`);
         lg.addColorStop(1, `rgba(${rgb}, 0)`);
-        g.fillStyle = lg;
-        g.fillRect(x - span + off, ly - width / 2, span * 2, width);
+        g.strokeStyle = lg;
+        g.lineWidth = width;
+        g.beginPath();
+        for (let dx = -span; dx <= span; dx += 2) {
+          const yy = ly + bend * Math.exp(-(dx * dx) / (2 * 20 * 20));
+          if (dx === -span) g.moveTo(x + dx + off, yy);
+          else g.lineTo(x + dx + off, yy);
+        }
+        g.stroke();
       };
       line(0, '255, 120, 210', 7, a * 0.25); // soft bloom
       line(-1.5, '255, 50, 140', 1.6, a * 0.9);
