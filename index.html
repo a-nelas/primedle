@@ -15,14 +15,12 @@
 </head>
 <body>
   <main class="game">
-    <div class="bar-card">
-      <div class="readout" id="readout" aria-live="polite">
-        <span class="crt">
-          <span class="readout-value" id="readout-value"></span>
-          <span class="readout-delta" id="readout-delta"></span>
-        </span>
-      </div>
-      <canvas id="bar" tabindex="0" aria-label="Number line. Move the ball anywhere to aim, click or press Enter to drop. Arrow keys also move the ball."></canvas>
+    <canvas id="bar" tabindex="0" aria-label="Number line. Move the ball anywhere to aim, click or press Enter to drop. Arrow keys also move the ball."></canvas>
+    <div class="readout" id="readout" aria-live="polite">
+      <span class="crt">
+        <span class="readout-value" id="readout-value"></span>
+        <span class="readout-delta" id="readout-delta"></span>
+      </span>
     </div>
     <div class="tries" id="tries" aria-label="Tries"></div>
   </main>

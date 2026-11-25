@@ -4,7 +4,7 @@ const PAD = 22; // px kept free at each end
 const BALL_R = 14;
 const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
 const CLEAR = 4; // gap between the floor (a straight invisible line) and the highest crest
-const REACH = 150; // px: how quickly the wave sinks as the ball moves away from the floor
+const REACH = 0.55; // × maxH: how quickly the wave sinks as the ball moves away from the floor
 const BASE_HALF = 7; // units visible each side at rest
 // Pointer → number mapping. The camera follows the ball to ALPHA of its
 // distance from N and the view widens by BETA per unit, which gives
@@ -19,7 +19,7 @@ const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MAX_SPARKS = 60;
-const SPARK_COUNT = 20; // roughly how many twinkle at once
+const SPARK_DENSITY = 25; // px of wave per twinkling sparkle (20 to 50 at once)
 // low-poly sparkle shapes (unit vertices)
 const SHAPES = [
   [[0, -1.6], [1, 0], [0, 1.6], [-1, 0]], // diamond
@@ -240,10 +240,14 @@ export class NumberBar {
     return this.usable / this.half;
   }
   get baseline() {
-    return this.h - 42;
+    return this.h - 96; // room below for N's label and the try dots
   }
+  /** Tallest the wave rises: about half the room above the baseline. */
   get maxH() {
-    return Math.max(40, this.baseline - 2 * BALL_R - FLOAT - 12);
+    return Math.max(40, Math.min(this.baseline * 0.55, this.baseline - 2 * BALL_R - FLOAT - 12));
+  }
+  get sparkCount() {
+    return clamp(Math.round(this.w / SPARK_DENSITY), 20, 50);
   }
   get sigma() {
     return Math.max(1.6, 46 / this.ppu);
@@ -383,9 +387,9 @@ export class NumberBar {
     // sparkles twinkle evenly across the wave, independent of the ball
     if (!REDUCED && this.w) {
       if (!this.sparks.length) {
-        for (let i = 0; i < SPARK_COUNT; i++) this.spark(Math.random());
+        for (let i = 0; i < this.sparkCount; i++) this.spark(Math.random());
       }
-      this.spawnAcc += dt * (SPARK_COUNT / 1.5);
+      this.spawnAcc += dt * (this.sparkCount / 1.5);
       while (this.spawnAcc >= 1) {
         this.spawnAcc -= 1;
         this.spark(0);
@@ -427,7 +431,7 @@ export class NumberBar {
       busy = true;
     }
     // the wave reaches up toward the ball: tall when it's near, low when far
-    this.prox = Math.exp(-Math.max(0, wall - this.bvy) / REACH);
+    this.prox = Math.exp(-Math.max(0, wall - this.bvy) / (REACH * this.maxH));
 
     // readout
     const live = this.enabled && (this.engaged || this.mode === 'key' || this.mode === 'drop');
@@ -606,7 +610,7 @@ export class NumberBar {
       ctx.save();
       ctx.globalCompositeOperation = 'lighter';
       const gy = base - this.maxH * 0.45;
-      const ry = Math.min(gy - 2, 110);
+      const ry = Math.min(gy - 2, this.maxH * 0.8);
       ctx.translate(bx, gy);
       ctx.scale(1.5, 1);
       const rg = ctx.createRadialGradient(0, 0, 0, 0, 0, ry);
@@ -763,7 +767,25 @@ export class NumberBar {
       ctx.stroke();
       ctx.shadowBlur = 0;
     }
-    stem(0, '#ffffff', 2, 12);
+    // N: a straight line from the baseline to the top of the screen
+    const x0 = this.xOf(0);
+    if (x0 >= -2 && x0 <= w + 2) {
+      ctx.save();
+      const line = (dx, rgb, width, a) => {
+        const lg = ctx.createLinearGradient(0, base, 0, 0);
+        lg.addColorStop(0, `rgba(${rgb}, ${a})`);
+        lg.addColorStop(1, `rgba(${rgb}, ${a * 0.3})`);
+        ctx.fillStyle = lg;
+        ctx.fillRect(x0 + dx - width / 2, 0, width, base);
+      };
+      ctx.globalCompositeOperation = 'lighter';
+      line(0, '255, 255, 255', 6, 0.08); // soft glow
+      line(-1.5, '255, 50, 140', 1.2, 0.6);
+      line(1.5, '60, 220, 255', 1.2, 0.5);
+      ctx.globalCompositeOperation = 'source-over';
+      line(0, '255, 255, 255', 1.5, 0.95);
+      ctx.restore();
+    }
 
     // daily number (the only digits on the bar), CRT style
     const xN = this.xOf(0);
