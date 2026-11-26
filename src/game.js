@@ -150,11 +150,19 @@ function showMusic() {
 // keep the press away from the game (a click here is not a drop)
 for (const t of ['pointerdown', 'pointerup']) musicBtn.addEventListener(t, (e) => e.stopPropagation());
 musicBtn.addEventListener('click', () => {
-  sfx.unlock();
   music.setOn(!music.isOn());
   showMusic();
 });
 showMusic();
+// it brightens and glows as the mouse comes close (0 far … 1 on it)
+window.addEventListener('pointermove', (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const r = musicBtn.getBoundingClientRect();
+  const d = Math.hypot(e.clientX - (r.left + r.width / 2), e.clientY - (r.top + r.height / 2));
+  const near = Math.min(1, Math.max(0, 1 - (d - 16) / 140)) ** 2;
+  musicBtn.style.setProperty('--near', near.toFixed(3));
+}, { passive: true });
+document.documentElement.addEventListener('pointerleave', () => musicBtn.style.setProperty('--near', '0'));
 
 // another tab played: pick up its progress, so tries can't be doubled up
 window.addEventListener('storage', (e) => {

@@ -719,7 +719,6 @@ export class NumberBar {
   onDown(e) {
     if (this.mode === 'drop' || e.button > 0) return;
     if (!this.enabled && this.focus === null) return;
-    sfx.unlock(); // browsers allow sound only after a click or tap
     e.preventDefault();
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
     this.engage(e);
@@ -733,8 +732,6 @@ export class NumberBar {
   }
 
   onUp(e) {
-    // touch only counts as the gesture that allows sound on release
-    sfx.unlock();
     const d = this.down;
     this.down = null;
     if (!d || this.mode === 'drop') return;

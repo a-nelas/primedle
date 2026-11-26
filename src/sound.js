@@ -1,8 +1,9 @@
 // 8-bit sound effects, synthesized with Web Audio (no files): square-wave
 // blips and a crunchy, bit-crushed noise crash.
 //
-// Browsers only allow sound after a click or tap, so `unlock()`
-// is called from those; until then every effect is silently skipped.
+// Browsers only allow sound after a click, tap or key press, so `unlock()`
+// runs on each of those, anywhere on the page; until the first one every
+// effect is silently skipped.
 
 let ctx = null;
 let out = null;
@@ -34,6 +35,12 @@ export function unlock() {
   const fire = () => unlockHooks.forEach((fn) => fn());
   if (ctx.state === 'suspended') ctx.resume().then(fire, () => {});
   else fire();
+}
+
+// any click, tap or key press anywhere counts (capture: before anything can
+// stop it); mouse counts on press, touch on release
+for (const t of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
+  window.addEventListener(t, unlock, { capture: true, passive: true });
 }
 
 function ready() {

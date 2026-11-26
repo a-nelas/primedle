@@ -8,7 +8,8 @@
 // Chords, one per bar (both halves): Em C G D | Em C D B.
 // Everything but the kick ducks on each beat (the EDM "pump").
 //
-// It starts on the first click or tap (browsers allow sound only after one),
+// It starts on the first click, tap or key press anywhere (browsers allow
+// sound only after one),
 // fades out while the tab is hidden, and the speaker button turns it off
 // (remembered in this browser).
 
@@ -20,7 +21,8 @@ const BARS = 16;
 const STEPS = BARS * 16;
 const LEVEL = 0.6; // the whole track, under the effects' master volume
 const LOOKAHEAD = 1.2; // s scheduled ahead (timers get coarse in the background)
-const STORE = 'primedle:music';
+// v2: an "off" saved by the first, since-removed toggle no longer applies
+const STORE = 'primedle:music:v2';
 
 const mtof = (m) => 440 * 2 ** ((m - 69) / 12);
 
@@ -53,6 +55,7 @@ const LEAD = [
 let enabled = true;
 try {
   enabled = localStorage.getItem(STORE) !== 'off';
+  localStorage.removeItem('primedle:music'); // the old key
 } catch {}
 
 let mix = null; // { bus, duck, lead, noise, pulse }
