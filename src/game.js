@@ -3,6 +3,7 @@ import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
 import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 import { cleanState } from './state.js';
+import { numberAt, spotOf, spotDistance } from './slots.js';
 import * as sfx from './sound.js';
 import * as music from './music.js';
 
@@ -53,14 +54,22 @@ if (stats.lastWinKey !== key && stats.lastWinKey !== yesterdayKey(key)) stats.st
 
 // ---- game ----------------------------------------------------------------
 
-const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout, fx: $('fx'), reach: REACH });
+const bar = new NumberBar($('bar'), {
+  center: N,
+  numberAt: (k) => numberAt(N, k),
+  spotOf: (v) => spotOf(N, v),
+  onDrop: handleDrop,
+  onHover: showReadout,
+  fx: $('fx'),
+  reach: REACH,
+});
 
 function showReadout(v) {
   const live = v !== null;
   $('readout').classList.toggle('live', live);
   if (!live) return;
-  const delta = v - N;
-  sfx.tick(delta);
+  const delta = v - N; // shown as the real difference
+  sfx.tick(spotOf(N, v)); // pitched by spot: each one an even step
   $('readout-value').textContent = String(v);
   $('readout-delta').textContent = delta === 0 ? '' : delta > 0 ? `+${delta}` : `-${-delta}`;
 }
@@ -71,7 +80,7 @@ function handleDrop(v) {
   // the same number again: show its bar once more, but it costs no try
   const again = state.guesses.find((g) => g.value === v);
   if (again) return hintColor(again.d);
-  const d = Math.min(...targets.map((t) => Math.abs(v - t)));
+  const d = Math.min(...targets.map((t) => spotDistance(N, v, t))); // in spots
   state.guesses.push({ value: v, d });
   if (d === 0) finish(true);
   else if (state.guesses.length >= MAX_TRIES) finish(false);

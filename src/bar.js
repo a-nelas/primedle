@@ -8,15 +8,15 @@ const BEND = 9; // px the floor gives way under the ball when it's pulled furthe
 const BEND_K = 260; // floor spring: stiffness (a touch springy so it settles back)
 const BEND_D = 2 * Math.sqrt(BEND_K) * 0.55;
 const REACH = 0.55; // × maxH: how quickly the wave sinks as the ball moves away from the floor
-const BASE_HALF = 10; // units visible each side at rest
+const BASE_HALF = 10; // spots visible each side at rest
 const IDLE_MS = 30; // with only the sparkles moving, draw about 30 times a second
-// Pointer → number mapping. The pointer's fraction f of the half-width maps
+// Pointer → spot mapping. The pointer's fraction f of the half-width maps
 // to an offset from N of  reach · (K·|f| + (1 − K)·|f|³):  fine control near
-// N, faster toward the edges. `reach` (40) covers the farthest the closest
-// prime can ever be (18, at 9569) plus a margin, the same on both sides, so
-// the screen edge gives nothing away. The camera then sits wherever puts that
-// number right under the pointer, while the view widens by BETA per unit.
-const K = 0.3; // K·reach ≈ 12: one number per step near the centre, as before
+// N, faster toward the edges. `reach` (40 spots) is far beyond where the
+// closest prime can ever be (7 spots), the same on both sides, so the screen
+// edge gives nothing away. The camera then sits wherever puts that spot right
+// under the pointer, while the view widens by BETA per unit.
+const K = 0.3; // K·reach ≈ 12: one spot per step near the centre
 const BETA = 0.42;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
@@ -60,24 +60,28 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 /**
  * A pink wave over the number line, centred on the daily number N.
  *
- * Positions are in "units": offsets from N. Each integer is a spring node
+ * Positions are in "units": spots away from N. The bar only holds N and the
+ * numbers ending in 1, 3, 7 or 9 (see slots.js); `numberAt(k)` and `spotOf(v)`
+ * convert between spots and numbers. Each integer unit is a spring node
  * and the wave is a smooth curve through them, rising into a bell under the
  * ball. The ball lives on a full-screen overlay (`fx`) and follows the pointer
  * anywhere on the page (mouse hover, or a finger sliding), but it can't pass
  * below the wave: it stops at an invisible wall just above it, flashing on
- * contact, and slides along at that height. Its x picks the number. A click
+ * contact, and slides along at that height. Its x picks the spot. A click
  * or tap drops it and scores the guess. The camera (`cam`) catches up behind
  * the ball and the view widens (`half`) the farther it goes, so N stays on
  * screen. The wave only moves when the pointer does; sparkles twinkle across
  * it on their own.
  */
 export class NumberBar {
-  constructor(canvas, { center, onDrop, onHover, fx, reach = 24 }) {
+  constructor(canvas, { center, numberAt, spotOf, onDrop, onHover, fx, reach = 40 }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.fx = fx;
     this.fxCtx = fx.getContext('2d');
     this.center = center;
+    this.numberAt = numberAt; // spot → number
+    this.spotOf = spotOf; // number → spot
     this.reach = reach;
     this.onDrop = onDrop;
     this.onHover = onHover || (() => {});
@@ -92,7 +96,7 @@ export class NumberBar {
     this.prox = 1; // 1 = ball on the floor, → 0 as it moves away; scales the bell
     this.slide = 0; // drop: lock-on progress toward the target, 0 → 1
     this.fall = 0; // drop: slam progress, 0 → 1
-    this.target = null; // drop: the whole number being hit
+    this.target = null; // drop: the spot being hit
     this.frozen = false; // the wave holds still while a drop plays out
     this.sink = 0; // drop: 0 → 1 as the ball falls on through the wave and off screen
     this.appear = 1; // the ball re-materialising for the next try, 0 → 1
@@ -154,7 +158,7 @@ export class NumberBar {
     if (!this.enabled && this.mode !== 'drop' && this.focus === null) {
       // game over: the wave flattens and the camera glides to the answer;
       // after that the pointer can look around (no ball)
-      const offs = this.answers.map((a) => a - this.center);
+      const offs = this.answers.map((a) => this.spotOf(a));
       this.focus = offs.length ? offs.reduce((a, b) => a + b, 0) / offs.length : 0;
       this.engaged = false;
       const half = this.restHalf + BETA * Math.abs(this.focus);
@@ -357,7 +361,7 @@ export class NumberBar {
     if (busy && !this.raf) this.raf = requestAnimationFrame((t2) => this.frame(t2));
   }
 
-  /** Number (in units) under a pointer at canvas x. */
+  /** The spot offset (in units) under a pointer at canvas x. */
   valueAt(x) {
     const f = clamp((x - this.w / 2) / this.usable, -1, 1);
     const a = Math.abs(f);
@@ -568,7 +572,7 @@ export class NumberBar {
 
     // readout
     const live = (this.enabled && (this.engaged || this.mode === 'drop')) || look;
-    const hv = live ? this.center + Math.round(this.ball) : null;
+    const hv = live ? this.numberAt(Math.round(this.ball)) : null;
     if (hv !== this.hovered) {
       this.hovered = hv;
       this.onHover(hv);
@@ -659,7 +663,7 @@ export class NumberBar {
     this.frozen = true; // the wave stays up, exactly as it is
     sfx.crash();
     // score it first: an accepted drop comes back with its hint colour
-    const res = this.onDrop(this.center + v);
+    const res = this.onDrop(this.numberAt(v));
     const accepted = !!res;
     const color = typeof res === 'string' ? res : null;
     if (color) this.hit = { u: v, color, t: 0 };
@@ -896,7 +900,7 @@ export class NumberBar {
     };
     const stacked = { left: 0, right: 0 };
     for (const m of this.markers) {
-      const u = m.value - this.center;
+      const u = this.spotOf(m.value);
       const x = this.xOf(u);
       const color = m.color || '#fff';
       if (x < PAD - 10 || x > w - PAD + 10) {
@@ -939,7 +943,7 @@ export class NumberBar {
     // after the game: the closest prime(s), in green
     if (this.reveal > 0.01) {
       this.answers.forEach((a, i) => {
-        const u = a - this.center;
+        const u = this.spotOf(a);
         const x = this.xOf(u);
         if (x < -2 || x > w + 2) {
           this.edgeArrow(x < w / 2 ? 'left' : 'right', base - 64, '#3dff9a');
