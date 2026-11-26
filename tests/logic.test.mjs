@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { isPrime, closestPrimes } from '../src/primes.js';
 import { dailyNumber, puzzleNumber, todayKey, yesterdayKey, MIN, MAX } from '../src/daily.js';
-import { levelFor, trend, shareText, hintColor } from '../src/hints.js';
+import { levelFor, trend, shareText, hintColor, scoreFor, REACH } from '../src/hints.js';
 
 test('isPrime', () => {
   const primes = [2, 3, 5, 7, 11, 13, 97, 101, 7919, 9973];
@@ -84,4 +84,22 @@ test('hint colour fades from green (spot on) to red (far off)', () => {
   assert.equal(hue(12), 0);
   assert.equal(hue(40), 0);
   for (let d = 1; d <= 12; d++) assert.ok(hue(d) < hue(d - 1), `hue drops at ${d}`);
+});
+
+test('score: 100% minus 20 + 2 per number off for each miss', () => {
+  assert.equal(scoreFor([]), 100);
+  assert.equal(scoreFor([{ d: 0 }]), 100);
+  assert.equal(scoreFor([{ d: 3 }, { d: 0 }]), 74);
+  assert.equal(scoreFor([{ d: 1 }, { d: 1 }, { d: 1 }]), 34);
+  assert.equal(scoreFor([{ d: 30 }, { d: 12 }, { d: 10 }]), 0);
+});
+
+test('every answer is well within reach of the ball', () => {
+  let max = 0;
+  for (let n = MIN; n <= MAX; n++) {
+    if (isPrime(n)) continue;
+    max = Math.max(max, Math.abs(closestPrimes(n)[0] - n));
+  }
+  assert.equal(max, 18);
+  assert.ok(REACH >= max + 4);
 });

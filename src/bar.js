@@ -7,15 +7,14 @@ const BEND_K = 260; // floor spring: stiffness (a touch springy so it settles ba
 const BEND_D = 2 * Math.sqrt(BEND_K) * 0.55;
 const REACH = 0.55; // × maxH: how quickly the wave sinks as the ball moves away from the floor
 const BASE_HALF = 7; // units visible each side at rest
-// Pointer → number mapping. The camera follows the ball to ALPHA of its
-// distance from N and the view widens by BETA per unit, which gives
-//   value = base · f / ((1 − ALPHA) − BETA · f)   for f = pointer fraction
-// so reach grows quickly toward the edges (about 54 at the very edge, more
-// than the largest prime gap below 10k) while N stays in view. A pointer
-// position always means the same number, so nothing drifts while it's still.
-const ALPHA = 0.45;
+// Pointer → number mapping. The pointer's fraction f of the half-width maps
+// to an offset from N of  reach · (K·|f| + (1 − K)·|f|³):  fine control near
+// N, faster toward the edges. `reach` (24) covers the farthest the closest
+// prime can ever be (18, at 9569) plus a margin, the same on both sides, so
+// the screen edge gives nothing away. The camera then sits wherever puts that
+// number right under the pointer, while the view widens by BETA per unit.
+const K = 0.5;
 const BETA = 0.42;
-const MAX_KEY = 54;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -53,12 +52,13 @@ const easeInOut = (t) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
  * it on their own.
  */
 export class NumberBar {
-  constructor(canvas, { center, onDrop, onHover, fx }) {
+  constructor(canvas, { center, onDrop, onHover, fx, reach = 24 }) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.fx = fx;
     this.fxCtx = fx.getContext('2d');
     this.center = center;
+    this.reach = reach;
     this.onDrop = onDrop;
     this.onHover = onHover || (() => {});
 
@@ -98,7 +98,10 @@ export class NumberBar {
     this.kb = 0;
     this.mode = 'idle'; // idle | key | drop
     this.enabled = true;
-    this.markers = []; // { value, kind }
+    this.markers = []; // { value, color }
+    this.answers = []; // shown once the game is over
+    this.focus = null; // game over: where the camera rests (units)
+    this.reveal = 0; // 0 → 1 as the answer appears
     this.nodes = new Map(); // unit -> { h, v }
     this.sparks = [];
     this.spawnAcc = 0;
@@ -127,13 +130,21 @@ export class NumberBar {
     this.resize();
   }
 
-  set({ markers, enabled }) {
+  set({ markers, enabled, answers }) {
     if (markers) this.markers = markers;
     if (enabled !== undefined) this.enabled = enabled;
-    if (!this.enabled && this.mode !== 'drop') {
-      // game over: settle the view back on N with a flat wave
+    if (answers) {
+      this.answers = answers;
+      this.answerLabels = answers.map((a) => this.makeLabel(String(a), '#7dffa8', 'rgba(61, 255, 154, 0.7)'));
+    }
+    if (!this.enabled && this.mode !== 'drop' && this.focus === null) {
+      // game over: the wave flattens and the camera glides to the answer;
+      // after that the pointer can look around (no ball)
+      const offs = this.answers.map((a) => a - this.center);
+      this.focus = offs.length ? offs.reduce((a, b) => a + b, 0) / offs.length : 0;
       this.engaged = false;
-      this.animate({ ball: 0, cam: 0, lift: 0, press: 0 }, 0.6, easeInOut);
+      const half = this.restHalf + BETA * Math.abs(this.focus);
+      this.animate({ ball: this.focus, cam: this.focus, half, lift: 0, press: 0, reveal: 1 }, 1.1, easeInOut);
     }
     // while playing, the ball is the cursor
     document.documentElement.classList.toggle('playing', this.enabled);
@@ -198,8 +209,16 @@ export class NumberBar {
     g.fill();
     this.ballSprite = { canvas: b, size };
 
-    // daily number label
-    const text = String(this.center);
+    this.labelSprite = this.makeLabel(String(this.center), '#e9e8ee', 'rgba(255, 255, 255, 0.6)');
+    if (this.answers.length) {
+      this.answerLabels = this.answers.map((a) => this.makeLabel(String(a), '#7dffa8', 'rgba(61, 255, 154, 0.7)'));
+    }
+    this.kick();
+  }
+
+  /** A CRT-style number label: RGB fringe, glow. */
+  makeLabel(text, core, glow) {
+    const dpr = this.dpr || 1;
     const font = `26px ${CRT_FONT}, ui-monospace, Consolas, monospace`;
     const meas = document.createElement('canvas').getContext('2d');
     meas.font = font;
@@ -217,12 +236,11 @@ export class NumberBar {
     lg.fillText(text, tw / 2 - 1.5, th / 2);
     lg.fillStyle = 'rgba(60, 220, 255, 0.65)';
     lg.fillText(text, tw / 2 + 1.5, th / 2);
-    lg.shadowColor = 'rgba(255, 255, 255, 0.6)';
+    lg.shadowColor = glow;
     lg.shadowBlur = 8;
-    lg.fillStyle = '#e9e8ee';
+    lg.fillStyle = core;
     lg.fillText(text, tw / 2, th / 2);
-    this.labelSprite = { canvas: l, w: tw, h: th };
-    this.kick();
+    return { canvas: l, w: tw, h: th };
   }
 
   // ---- geometry ----------------------------------------------------------
@@ -304,29 +322,47 @@ export class NumberBar {
     if (busy) this.raf = requestAnimationFrame((t2) => this.frame(t2));
   }
 
-  /** Number (in units) under a pointer at fraction f of the half-width. */
+  /** Number (in units) under a pointer at canvas x. */
   valueAt(x) {
     const f = clamp((x - this.w / 2) / this.usable, -1, 1);
     const a = Math.abs(f);
-    return (Math.sign(f) * this.restHalf * a) / (1 - ALPHA - BETA * a);
+    return Math.sign(f) * this.reach * (K * a + (1 - K) * a * a * a);
+  }
+  /** The pointer fraction that picks offset v (inverse of valueAt). */
+  fracOf(v) {
+    const t = Math.min(1, Math.abs(v) / this.reach);
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 24; i++) {
+      const m = (lo + hi) / 2;
+      if (K * m + (1 - K) * m * m * m < t) lo = m;
+      else hi = m;
+    }
+    return Math.sign(v) * (lo + hi) / 2;
   }
 
   step(dt) {
     let busy = false;
     const R = (this.rect = this.canvas.getBoundingClientRect());
     const free = this.mode === 'idle' && this.engaged && this.enabled;
+    const over = !this.enabled && this.mode === 'idle' && this.focus !== null;
+    const look = over && this.engaged; // game over: the pointer pans the view
 
-    // the number under the ball heads for its target; the camera catches up
+    // the number under the ball (or, after the game, under the pointer)
+    // heads for its target; the camera catches up
     let target = null;
-    if (free) target = this.valueAt(this.mx - R.left);
+    if (free || look) target = this.valueAt(this.mx - R.left);
     else if (this.mode === 'key') target = this.kb;
+    else if (over) target = this.focus;
     if (target !== null) {
       this.ball += (target - this.ball) * follow(18, dt);
       if (Math.abs(target - this.ball) > 0.002) busy = true;
     }
     if (this.mode !== 'drop' && !this.tween) {
-      const camT = ALPHA * this.ball;
+      // put the number right under the pointer (or, resting after the game,
+      // centre the answer)
       const halfT = this.restHalf + BETA * Math.abs(this.ball);
+      const camT = over && !look ? this.focus : this.ball - this.fracOf(this.ball) * halfT;
       this.cam += (camT - this.cam) * follow(7, dt);
       this.half += (halfT - this.half) * follow(7, dt);
       if (Math.abs(camT - this.cam) > 0.002 || Math.abs(halfT - this.half) > 0.002) busy = true;
@@ -476,7 +512,7 @@ export class NumberBar {
     this.prox = Math.exp(-Math.max(0, wall - this.bvy) / (REACH * this.maxH));
 
     // readout
-    const live = this.enabled && (this.engaged || this.mode === 'key' || this.mode === 'drop');
+    const live = (this.enabled && (this.engaged || this.mode === 'key' || this.mode === 'drop')) || look;
     const hv = live ? this.center + Math.round(this.mode === 'key' ? this.kb : this.ball) : null;
     if (hv !== this.hovered) {
       this.hovered = hv;
@@ -629,7 +665,8 @@ export class NumberBar {
   }
 
   onDown(e) {
-    if (!this.enabled || this.mode === 'drop' || e.button > 0) return;
+    if (this.mode === 'drop' || e.button > 0) return;
+    if (!this.enabled && this.focus === null) return;
     e.preventDefault();
     this.canvas.focus({ preventScroll: true });
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -637,7 +674,8 @@ export class NumberBar {
   }
 
   onMove(e) {
-    if (!this.enabled || this.mode === 'drop') return;
+    if (this.mode === 'drop') return;
+    if (!this.enabled && this.focus === null) return;
     // mouse steers by hovering; touch and pen steer while pressed
     if (e.pointerType === 'mouse' || this.down) this.engage(e);
   }
@@ -645,7 +683,11 @@ export class NumberBar {
   onUp(e) {
     const d = this.down;
     this.down = null;
-    if (!d || !this.enabled || this.mode === 'drop') return;
+    if (!d || this.mode === 'drop') return;
+    if (!this.enabled) {
+      if (e.pointerType !== 'mouse') this.disengage(); // lifted: back to the answer
+      return;
+    }
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
     const isTap = moved <= TAP_SLOP && performance.now() - d.t <= TAP_TIME;
     if (isTap) {
@@ -669,7 +711,7 @@ export class NumberBar {
         this.kb = Math.round(this.ball);
       }
       const step = (k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
-      this.kb = clamp(this.kb + step, -MAX_KEY, MAX_KEY);
+      this.kb = clamp(this.kb + step, -this.reach, this.reach);
       this.kick();
     } else if (k === 'Enter' || k === ' ') {
       e.preventDefault();
@@ -855,6 +897,38 @@ export class NumberBar {
       ctx.globalCompositeOperation = 'source-over';
       line(0, '255, 255, 255', 1.5, 0.95);
       ctx.restore();
+    }
+
+    // after the game: the closest prime(s), in green
+    if (this.reveal > 0.01) {
+      this.answers.forEach((a, i) => {
+        const u = a - this.center;
+        const x = this.xOf(u);
+        if (x < -2 || x > w + 2) {
+          this.edgeArrow(x < w / 2 ? 'left' : 'right', base - 64, '#3dff9a');
+          return;
+        }
+        // stepped fade-in, like a phosphor warming up
+        const k = Math.round(this.reveal * 4) / 4;
+        ctx.save();
+        ctx.globalAlpha = k;
+        const line = (dx, rgb, width, a) => {
+          const lg = ctx.createLinearGradient(0, base, 0, 0);
+          lg.addColorStop(0, `rgba(${rgb}, ${a})`);
+          lg.addColorStop(1, `rgba(${rgb}, ${a * 0.3})`);
+          ctx.fillStyle = lg;
+          ctx.fillRect(x + dx - width / 2, 0, width, base);
+        };
+        ctx.globalCompositeOperation = 'lighter';
+        line(0, '61, 255, 154', 8, 0.12);
+        line(-1.5, '255, 50, 140', 1.2, 0.45);
+        line(1.5, '60, 220, 255', 1.2, 0.45);
+        ctx.globalCompositeOperation = 'source-over';
+        line(0, '125, 255, 168', 2, 0.95);
+        const L = this.answerLabels?.[i];
+        if (L) ctx.drawImage(L.canvas, x - L.w / 2, this.surfaceY(u) - L.h - 10, L.w, L.h);
+        ctx.restore();
+      });
     }
 
     // daily number (the only digits on the bar), CRT style

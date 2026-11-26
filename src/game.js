@@ -1,6 +1,6 @@
 import { closestPrimes } from './primes.js';
 import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
-import { MAX_TRIES, hintColor } from './hints.js';
+import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 
 // Game-only build: just the number bar, the readout and the try dots.
@@ -53,7 +53,7 @@ if (stats.lastWinKey !== key && stats.lastWinKey !== yesterdayKey(key)) stats.st
 
 // ---- game ----------------------------------------------------------------
 
-const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout, fx: $('fx') });
+const bar = new NumberBar($('bar'), { center: N, onDrop: handleDrop, onHover: showReadout, fx: $('fx'), reach: REACH });
 
 function showReadout(v) {
   const live = v !== null;
@@ -98,7 +98,9 @@ function render() {
   bar.set({
     markers: g.map((x) => ({ value: x.value, color: hintColor(x.d) })),
     enabled: !over,
+    answers: over ? targets : undefined, // revealed once the game is over
   });
+  showScore(scoreFor(g), over);
   $('tries').innerHTML = Array.from({ length: MAX_TRIES }, (_, i) => {
     const x = g[i];
     if (!x) return '<span class="try"></span>';
@@ -106,6 +108,31 @@ function render() {
     return `<span class="try used" style="background:${c};box-shadow:0 0 10px ${c}"></span>`;
   }).join('');
   $('tries').setAttribute('aria-label', `${g.length} of ${MAX_TRIES} tries used`);
+}
+
+// ---- score: a big faded percentage in the background ----------------------
+
+let shownScore = null;
+let scoreAnim = 0;
+function showScore(score, over) {
+  const el = $('score');
+  el.classList.toggle('final', over);
+  el.setAttribute('aria-label', `Score ${score} percent`);
+  cancelAnimationFrame(scoreAnim);
+  const from = shownScore ?? score;
+  shownScore = score;
+  if (from === score) {
+    el.textContent = `${score}%`;
+    return;
+  }
+  // count down to the new score in a few stepped ticks
+  const t0 = performance.now();
+  const tick = (t) => {
+    const p = Math.min(1, (t - t0) / 600);
+    el.textContent = `${Math.round(from + (score - from) * p)}%`;
+    if (p < 1) scoreAnim = requestAnimationFrame(tick);
+  };
+  scoreAnim = requestAnimationFrame(tick);
 }
 
 // a new number at local midnight

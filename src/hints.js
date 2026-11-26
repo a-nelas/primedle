@@ -1,6 +1,13 @@
 export const MAX_TRIES = 3;
 export const SITE_URL = 'https://a-nelas.github.io/primedle/';
 
+/**
+ * How far the ball reaches either side of the daily number. The closest prime
+ * is never more than 18 away (at 9569, between 9551 and 9587); the margin
+ * keeps the screen edge from hinting at the answer.
+ */
+export const REACH = 24;
+
 export const LEVELS = [
   { max: 0, id: 'correct', label: 'Correct', emoji: '🟩' },
   { max: 2, id: 'hot', label: 'Hot', emoji: '🟥' },
@@ -22,6 +29,19 @@ export function hintColor(d) {
   const t = Math.min(1, Math.max(0, d) / 12);
   const hue = Math.round(130 * (1 - Math.sqrt(t)));
   return `hsl(${hue}, 100%, ${d === 0 ? 58 : 60}%)`;
+}
+
+/**
+ * Score as a percentage. You start at 100%; each miss costs 20 points plus 2
+ * per number it was off (capped at 10 off, so 22 to 40 points). A hit keeps
+ * what is left; three misses leave whatever remains, never below 0.
+ */
+export function missCost(d) {
+  return 20 + 2 * Math.min(d, 10);
+}
+export function scoreFor(guesses) {
+  const lost = guesses.filter((g) => g.d > 0).reduce((s, g) => s + missCost(g.d), 0);
+  return Math.max(0, 100 - lost);
 }
 
 export function trend(prevD, d) {
