@@ -94,7 +94,7 @@ const FAMOUS_NUMBERS = {
   1089: '×9 = 9801',
 };
 
-/** Up to two short lines about composite n: its factors, then one more. */
+/** Two short lines about composite n: its factors, then one more. */
 export function numberFacts(n) {
   const f = factorize(n);
   const lines = [f.map(([q, e]) => (e > 1 ? `${q}${sup(e)}` : `${q}`)).join(' × ')];
@@ -111,8 +111,22 @@ export function numberFacts(n) {
   if (isPalindrome(n)) add('a palindrome');
   const ds = digits.reduce((s, d) => s + d, 0);
   if (n % ds === 0) add(`÷ its digit sum, ${ds}`);
-  add(`${f.reduce((c, [, e]) => c * (e + 1), 1)} divisors`);
+  add(primeSum(n));
   return lines;
+}
+
+/**
+ * n as a sum of primes, smallest first: two for an even number (Goldbach),
+ * else 2 + a prime, else three (3 + two more).
+ */
+function primeSum(n) {
+  const pair = (m) => {
+    for (let p = 2; p <= m / 2; p++) if (isPrime(p) && isPrime(m - p)) return [p, m - p];
+    return null;
+  };
+  if (n % 2 === 0) return `${pair(n).join('+')}, both prime`;
+  if (isPrime(n - 2)) return `2+${n - 2}, both prime`;
+  return `${[3, ...pair(n - 3)].join('+')}, all prime`;
 }
 
 function gcd(a, b) {

@@ -51,8 +51,8 @@ const TAP_SLOP = 8; // px a tap may move and still count as a click
 const TAP_TIME = 450; // ms
 
 const CRT_FONT = 'VT323';
-const INFO_SIZE = 20; // px: the facts under the numbers after the game
-const INFO_LINE = 19; // px between their lines
+const INFO_SIZE = 25; // px: the facts under the numbers after the game
+const INFO_LINE = 23; // px between their lines
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const follow = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeOut = (t) => 1 - (1 - t) ** 3;
@@ -256,7 +256,7 @@ export class NumberBar {
       return { value, sprites, w: Math.max(0, ...sprites.map((x) => x.w)) };
     });
     const rows = Math.max(0, ...this.info.map((b) => b.lines.length));
-    this.infoH = rows ? rows * INFO_LINE + 6 : 0;
+    this.infoH = rows ? rows * INFO_LINE + 10 : 0;
   }
 
   /** A CRT-style number label: RGB fringe, glow. */
@@ -1053,16 +1053,20 @@ export class NumberBar {
     const blocks = [];
     const nb = this.infoSprites.find((b) => b.value === this.center);
     const n = nb && at(this.center);
-    let nl = n ? clamp(n.cx - nb.w / 2, 4, w - 4 - nb.w) : 0;
+    // on a narrow screen, shrink the text so two blocks fit side by side
+    const widest = Math.max(0, ...this.infoSprites.filter((b) => b !== nb).map((b) => b.w));
+    const s = Math.min(1, (w - 16) / ((nb ? nb.w : 0) + widest || 1));
+    const W = (b) => b.w * s;
+    let nl = n ? clamp(n.cx - W(nb) / 2, 4, w - 4 - W(nb)) : 0;
     for (const b of this.infoSprites) {
       if (b === nb) continue;
       const p = at(b.value);
       if (!p) continue; // that answer is off screen
-      let l = clamp(p.cx - b.w / 2, 4, w - 4 - b.w);
-      if (n && l < nl + nb.w + 6 && l + b.w > nl - 6) {
-        l = clamp(p.side > 0 ? nl + nb.w + 8 : nl - 8 - b.w, 4, w - 4 - b.w);
+      let l = clamp(p.cx - W(b) / 2, 4, w - 4 - W(b));
+      if (n && l < nl + W(nb) + 6 && l + W(b) > nl - 6) {
+        l = clamp(p.side > 0 ? nl + W(nb) + 8 : nl - 8 - W(b), 4, w - 4 - W(b));
         // pinned against the edge: move N's block out of the way instead
-        if (l < nl + nb.w + 6 && l + b.w > nl - 6) nl = clamp(p.side > 0 ? l - 8 - nb.w : l + b.w + 8, 4, w - 4 - nb.w);
+        if (l < nl + W(nb) + 6 && l + W(b) > nl - 6) nl = clamp(p.side > 0 ? l - 8 - W(nb) : l + W(b) + 8, 4, w - 4 - W(nb));
       }
       blocks.push([b, l]);
     }
@@ -1070,7 +1074,7 @@ export class NumberBar {
     ctx.save();
     ctx.globalAlpha = Math.round(this.reveal * 4) / 4; // stepped, like the labels
     for (const [b, l] of blocks) {
-      b.sprites.forEach((sp, i) => ctx.drawImage(sp.canvas, l + (b.w - sp.w) / 2, top + i * INFO_LINE, sp.w, sp.h));
+      b.sprites.forEach((sp, i) => ctx.drawImage(sp.canvas, l + (W(b) - sp.w * s) / 2, top + i * INFO_LINE * s, sp.w * s, sp.h * s));
     }
     ctx.restore();
   }
