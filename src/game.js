@@ -2,6 +2,7 @@ import { closestPrimes } from './primes.js';
 import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
 import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
+import * as sfx from './sound.js';
 
 // Game-only build: just the number bar, the readout and the try dots.
 // The title, help, hint text, results, sharing and stats dialogs were removed
@@ -60,6 +61,7 @@ function showReadout(v) {
   $('readout').classList.toggle('live', live);
   if (!live) return;
   const delta = v - N;
+  sfx.tick(delta);
   $('readout-value').textContent = String(v);
   $('readout-delta').textContent = delta === 0 ? '' : delta > 0 ? `+${delta}` : `-${-delta}`;
 }

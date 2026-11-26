@@ -1,3 +1,5 @@
+import * as sfx from './sound.js';
+
 const PAD = 22; // px kept free at each end
 const BALL_R = 18;
 const FLOAT = 20; // gap above the crest where the ball rests when nobody steers it
@@ -589,12 +591,16 @@ export class NumberBar {
     this.animate({ ball: v, slide: 1 }, 0.07, linear, () =>
       this.animate({}, 0.05, linear, () =>
         // the bell collapses and the wave bends down as it slams in
-        this.animate({ fall: 1, lift: 0, press: 1 }, 0.12, easeIn, () => this.impact(v)),
+        {
+          sfx.fall(0.12);
+          this.animate({ fall: 1, lift: 0, press: 1 }, 0.12, easeIn, () => this.impact(v));
+        },
       ),
     );
   }
 
   impact(v) {
+    sfx.crash();
     for (let d = -2; d <= 2; d++) {
       const b = this.nodes.get(v + d);
       if (b) b.v -= 280 * Math.exp(-(d * d) / 2);
@@ -667,6 +673,7 @@ export class NumberBar {
   onDown(e) {
     if (this.mode === 'drop' || e.button > 0) return;
     if (!this.enabled && this.focus === null) return;
+    sfx.unlock(); // browsers allow sound only after a click or tap
     e.preventDefault();
     this.canvas.focus({ preventScroll: true });
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
@@ -701,6 +708,7 @@ export class NumberBar {
   }
 
   onKey(e) {
+    sfx.unlock();
     if (!this.enabled || this.mode === 'drop') return;
     const k = e.key;
     if (k === 'ArrowLeft' || k === 'ArrowRight') {
