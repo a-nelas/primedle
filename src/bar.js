@@ -29,6 +29,11 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
+// beside a scoring bar the wave runs down at about 40°, bending over the
+// bar's edge, until it meets the low part of the wave and eases into it
+const BAR_SLOPE = Math.tan((40 * Math.PI) / 180);
+const BAR_ROUND = 10; // px: how gently the wave bends over the bar's edge
+const BAR_MEET = 16; // px: how softly the slope eases into the wave below
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
@@ -285,10 +290,18 @@ export class NumberBar {
   surfaceY(u) {
     let h = Math.max(3, this.springH(u));
     // a scoring bar shapes the wave around it: flat across the bar's top,
-    // then a sheer drop at its edges, straight down to the wave's rest
+    // then bending over its edges and running down at about 40° until it
+    // meets the low part of the wave (all smooth: no corners)
     const P = this.plateau;
     if (P) {
-      const shape = Math.abs(this.xOf(u) - P.x) <= P.hw ? P.h : P.rest;
+      const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
+      let shape = P.h;
+      if (dx > 0) {
+        const slope = P.h - BAR_SLOPE * (Math.sqrt(dx * dx + BAR_ROUND * BAR_ROUND) - BAR_ROUND);
+        // a smooth maximum of the slope and the wave, exact at the bar's edge
+        const k = BAR_MEET * Math.min(1, dx / (2 * BAR_MEET));
+        shape = (slope + h + Math.sqrt((slope - h) ** 2 + k * k)) / 2;
+      }
       h += (shape - h) * P.amt;
     }
     return this.baseline - h;
@@ -487,7 +500,6 @@ export class NumberBar {
         x: this.xOf(this.hit.u),
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
-        rest: this.restFor(0),
         amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
       };
     }
@@ -709,16 +721,8 @@ export class NumberBar {
     }
 
     // the wave
-    const xs = [];
-    for (let x = 0; x <= w + 3; x += 3) xs.push(x);
-    const P = this.plateau;
-    if (P) {
-      // sample right at the bar's edges, on both sides, so they drop sheer
-      const e = 0.01;
-      xs.push(P.x - P.hw - e, P.x - P.hw + e, P.x + P.hw - e, P.x + P.hw + e);
-      xs.sort((a, b) => a - b);
-    }
-    const pts = xs.map((x) => [x, this.surfaceY(this.uOf(x))]);
+    const pts = [];
+    for (let x = 0; x <= w + 3; x += 3) pts.push([x, this.surfaceY(this.uOf(x))]);
 
     ctx.beginPath();
     ctx.moveTo(0, base);
@@ -1119,12 +1123,7 @@ export class NumberBar {
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(x0, base);
-    const xs = [];
-    for (let xx = x0; xx <= x1; xx++) xs.push(xx);
-    const P = this.plateau;
-    if (P) xs.push(P.x - P.hw - 0.01, P.x - P.hw + 0.01, P.x + P.hw - 0.01, P.x + P.hw + 0.01);
-    xs.sort((a, b) => a - b);
-    for (const xx of xs) {
+    for (let xx = x0; xx <= x1; xx++) {
       const sy = this.surfaceY(this.uOf(xx));
       top = Math.min(top, sy);
       ctx.lineTo(xx, sy);
