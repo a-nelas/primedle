@@ -1,7 +1,7 @@
 // 8-bit sound effects, synthesized with Web Audio (no files): square-wave
 // blips and a crunchy, bit-crushed noise crash.
 //
-// Browsers only allow sound after a click, tap or key press, so `unlock()`
+// Browsers only allow sound after a click or tap, so `unlock()`
 // is called from those; until then every effect is silently skipped.
 
 let ctx = null;

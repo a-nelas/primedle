@@ -6,9 +6,8 @@
 //   bars 9-16  the same, with a lead melody and a little echo on top
 // Chords, two bars per line of the melody: Am F C G | Am F G E.
 //
-// It starts on the first click, tap or key press (browsers allow sound only
-// after one), fades out while the tab is hidden, and can be switched off
-// (remembered in this browser).
+// It starts on the first click or tap (browsers allow sound only after one)
+// and fades out while the tab is hidden.
 
 import { context, onUnlock } from './sound.js';
 
@@ -18,7 +17,6 @@ const BARS = 16;
 const STEPS = BARS * 16;
 const LEVEL = 0.75; // the whole song, under the effects' master volume
 const LOOKAHEAD = 1.2; // s scheduled ahead (timers get coarse in the background)
-const STORE = 'primedle:music';
 
 const mtof = (m) => 440 * 2 ** ((m - 69) / 12);
 
@@ -47,11 +45,6 @@ const MELODY = [
   [71, _, 74, _, 79, _, 77, _],
   [76, _, _, _, 68, _, 71, _],
 ];
-
-let enabled = true;
-try {
-  enabled = localStorage.getItem(STORE) !== 'off';
-} catch {}
 
 let bus = null; // { gain, lead }: the song's volume and the lead's echo send
 let pulse = null;
@@ -147,7 +140,7 @@ function schedule() {
 
 function start() {
   const a = context();
-  if (!a || timer || !enabled || document.hidden) return;
+  if (!a || timer || document.hidden) return;
   const { ctx, out } = a;
   if (!bus) {
     bus = makeBus(ctx, out);
@@ -172,17 +165,6 @@ function stop() {
   bus.gain.gain.cancelScheduledValues(now);
   bus.gain.gain.setValueAtTime(bus.gain.gain.value, now);
   bus.gain.gain.linearRampToValueAtTime(0, now + 0.4);
-}
-
-export const isOn = () => enabled;
-
-export function setOn(on) {
-  enabled = on;
-  try {
-    localStorage.setItem(STORE, on ? 'on' : 'off');
-  } catch {}
-  if (on) start();
-  else stop();
 }
 
 onUnlock(start);

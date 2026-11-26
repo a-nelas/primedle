@@ -3,7 +3,7 @@ import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
 import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 import * as sfx from './sound.js';
-import * as music from './music.js';
+import './music.js'; // the background song
 
 // Game-only build: just the number bar, the readout and the try dots.
 // The title, help, hint text, results, sharing and stats dialogs were removed
@@ -138,15 +138,6 @@ function showScore(score, over) {
   };
   scoreAnim = requestAnimationFrame(tick);
 }
-
-// ---- music: on by default, M turns it off or on again --------------------
-
-window.addEventListener('keydown', (e) => {
-  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
-    sfx.unlock();
-    music.setOn(!music.isOn());
-  }
-});
 
 // a new number at local midnight
 setInterval(() => {

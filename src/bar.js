@@ -95,8 +95,7 @@ export class NumberBar {
     this.rect = null;
     this.engaged = false; // pointer is steering the ball
     this.down = null; // { x, y, t } of the current press
-    this.kb = 0;
-    this.mode = 'idle'; // idle | key | drop
+    this.mode = 'idle'; // idle | drop
     this.enabled = true;
     this.markers = []; // { value, color }
     this.answers = []; // shown once the game is over
@@ -122,11 +121,6 @@ export class NumberBar {
     });
     document.documentElement.addEventListener('mouseleave', () => this.disengage());
     window.addEventListener('blur', () => this.disengage());
-    canvas.addEventListener('keydown', (e) => this.onKey(e));
-    canvas.addEventListener('blur', () => {
-      if (this.mode === 'key') this.mode = 'idle';
-      this.kick();
-    });
     this.resize();
   }
 
@@ -360,7 +354,6 @@ export class NumberBar {
     // heads for its target; the camera catches up
     let target = null;
     if (free || look) target = this.valueAt(this.mx - R.left);
-    else if (this.mode === 'key') target = this.kb;
     else if (over) target = this.focus;
     if (target !== null) {
       this.ball += (target - this.ball) * follow(18, dt);
@@ -503,8 +496,8 @@ export class NumberBar {
     this.prox = Math.exp(-Math.max(0, wall - this.bvy) / (REACH * this.maxH));
 
     // readout
-    const live = (this.enabled && (this.engaged || this.mode === 'key' || this.mode === 'drop')) || look;
-    const hv = live ? this.center + Math.round(this.mode === 'key' ? this.kb : this.ball) : null;
+    const live = (this.enabled && (this.engaged || this.mode === 'drop')) || look;
+    const hv = live ? this.center + Math.round(this.ball) : null;
     if (hv !== this.hovered) {
       this.hovered = hv;
       this.onHover(hv);
@@ -639,7 +632,6 @@ export class NumberBar {
     this.engaged = true;
     this.mx = e.clientX;
     this.my = e.clientY;
-    if (this.mode === 'key') this.mode = 'idle';
     this.kick();
   }
 
@@ -654,7 +646,6 @@ export class NumberBar {
     if (!this.enabled && this.focus === null) return;
     sfx.unlock(); // browsers allow sound only after a click or tap
     e.preventDefault();
-    this.canvas.focus({ preventScroll: true });
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
     this.engage(e);
   }
@@ -683,26 +674,6 @@ export class NumberBar {
       this.drop(e.pointerType === 'mouse' ? this.ball : this.valueAt(e.clientX - rect.left));
     } else if (e.pointerType !== 'mouse') {
       this.disengage(); // finger lifted after aiming: the ball stays floating there
-    }
-  }
-
-  onKey(e) {
-    sfx.unlock();
-    if (!this.enabled || this.mode === 'drop') return;
-    const k = e.key;
-    if (k === 'ArrowLeft' || k === 'ArrowRight') {
-      e.preventDefault();
-      if (this.mode !== 'key') {
-        this.mode = 'key';
-        this.engaged = false;
-        this.kb = Math.round(this.ball);
-      }
-      const step = (k === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 10 : 1);
-      this.kb = clamp(this.kb + step, -this.reach, this.reach);
-      this.kick();
-    } else if (k === 'Enter' || k === ' ') {
-      e.preventDefault();
-      this.drop(this.mode === 'key' ? this.kb : this.ball);
     }
   }
 
@@ -983,7 +954,7 @@ export class NumberBar {
 
     // aim line from the ball down to the whole number it would land on
     if (this.mode !== 'drop' && this.lift > 0.05) {
-      const hx = R.left + this.xOf(Math.round(this.mode === 'key' ? this.kb : this.ball));
+      const hx = R.left + this.xOf(Math.round(this.ball));
       const top = y + BALL_R + 3;
       const bot = R.top + this.baseline;
       if (bot > top) {

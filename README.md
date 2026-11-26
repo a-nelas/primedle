@@ -6,7 +6,7 @@ You get 3 tries. The only hints are your drops, each colored from red (12 or mor
 
 Your score is how close your best drop got to the prime: 100% on it, dropping evenly to 0% at 12 or more away. It doesn't matter which try it was. After the game the answer is revealed and you can look around the number line.
 
-A small 8-bit song plays softly in the background, and every sound is synthesized in the browser. Press M to turn the music off or on.
+A small 8-bit song plays softly in the background, and every sound is synthesized in the browser.
 
 Play at **https://a-nelas.github.io/primedle/**
 
