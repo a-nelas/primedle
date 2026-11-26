@@ -11,6 +11,16 @@ let lastTick = 0;
 
 const VOLUME = 0.16;
 
+const unlockHooks = [];
+/** Run `fn` each time sound becomes available (after a click, tap or key). */
+export function onUnlock(fn) {
+  unlockHooks.push(fn);
+}
+/** The audio context and master output, once sound is running (else null). */
+export function context() {
+  return ready() ? { ctx, out } : null;
+}
+
 export function unlock() {
   if (!ctx) {
     const AC = window.AudioContext || window.webkitAudioContext;
@@ -21,10 +31,14 @@ export function unlock() {
     out.connect(ctx.destination);
     noise = crunchyNoise(0.5);
   }
-  if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  const fire = () => unlockHooks.forEach((fn) => fn());
+  if (ctx.state === 'suspended') ctx.resume().then(fire, () => {});
+  else fire();
 }
 
-const ready = () => ctx && ctx.state === 'running';
+function ready() {
+  return !!ctx && ctx.state === 'running';
+}
 
 /** Noise held for a few samples at a time and quantized to 8 levels: a lo-fi, 8-bit hiss. */
 function crunchyNoise(seconds) {

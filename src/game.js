@@ -3,6 +3,7 @@ import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
 import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 import * as sfx from './sound.js';
+import * as music from './music.js';
 
 // Game-only build: just the number bar, the readout and the try dots.
 // The title, help, hint text, results, sharing and stats dialogs were removed
@@ -137,6 +138,26 @@ function showScore(score, over) {
   };
   scoreAnim = requestAnimationFrame(tick);
 }
+
+// ---- music on/off (button, or the M key) ----------------------------------
+
+const musicBtn = $('music');
+function showMusic() {
+  musicBtn.classList.toggle('muted', !music.isOn());
+  musicBtn.setAttribute('aria-pressed', String(music.isOn()));
+}
+function toggleMusic() {
+  sfx.unlock();
+  music.setOn(!music.isOn());
+  showMusic();
+}
+// keep the press away from the game (a click here is not a drop)
+for (const t of ['pointerdown', 'pointerup']) musicBtn.addEventListener(t, (e) => e.stopPropagation());
+musicBtn.addEventListener('click', toggleMusic);
+window.addEventListener('keydown', (e) => {
+  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) toggleMusic();
+});
+showMusic();
 
 // a new number at local midnight
 setInterval(() => {
