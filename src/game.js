@@ -122,14 +122,14 @@ function showScore(score, over) {
   const from = shownScore ?? score;
   shownScore = score;
   if (from === score) {
-    el.textContent = `${score}%`;
+    el.innerHTML = `<span>${score}%</span>`;
     return;
   }
-  // count down to the new score in a few stepped ticks
+  // count up to the new score
   const t0 = performance.now();
   const tick = (t) => {
     const p = Math.min(1, (t - t0) / 600);
-    el.textContent = `${Math.round(from + (score - from) * p)}%`;
+    el.innerHTML = `<span>${Math.round(from + (score - from) * p)}%</span>`;
     if (p < 1) scoreAnim = requestAnimationFrame(tick);
   };
   scoreAnim = requestAnimationFrame(tick);

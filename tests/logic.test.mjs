@@ -86,12 +86,16 @@ test('hint colour fades from green (spot on) to red (far off)', () => {
   for (let d = 1; d <= 12; d++) assert.ok(hue(d) < hue(d - 1), `hue drops at ${d}`);
 });
 
-test('score: 100% minus 20 + 2 per number off for each miss', () => {
-  assert.equal(scoreFor([]), 100);
+test('score starts at 0% and grows with the best drop', () => {
+  assert.equal(scoreFor([]), 0);
   assert.equal(scoreFor([{ d: 0 }]), 100);
-  assert.equal(scoreFor([{ d: 3 }, { d: 0 }]), 74);
-  assert.equal(scoreFor([{ d: 1 }, { d: 1 }, { d: 1 }]), 34);
-  assert.equal(scoreFor([{ d: 30 }, { d: 12 }, { d: 10 }]), 0);
+  assert.equal(scoreFor([{ d: 3 }, { d: 0 }]), 75);
+  assert.equal(scoreFor([{ d: 6 }]), 25);
+  assert.equal(scoreFor([{ d: 1 }, { d: 1 }, { d: 1 }]), 46);
+  assert.equal(scoreFor([{ d: 30 }, { d: 12 }, { d: 20 }]), 0);
+  // never shrinks, and any win (50%+) beats any loss (46% at most)
+  assert.equal(scoreFor([{ d: 1 }, { d: 9 }]), 46);
+  assert.equal(scoreFor([{ d: 5 }, { d: 7 }, { d: 0 }]), 50);
 });
 
 test('every answer is well within reach of the ball', () => {

@@ -858,10 +858,6 @@ export class NumberBar {
       ctx.moveTo(x, base);
       ctx.lineTo(x, y);
       ctx.stroke();
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y, width + 2, 0, Math.PI * 2);
-      ctx.fill();
       ctx.shadowBlur = 0;
       ctx.globalAlpha = 1;
       return { x, y };

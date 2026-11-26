@@ -32,16 +32,19 @@ export function hintColor(d) {
 }
 
 /**
- * Score as a percentage. You start at 100%; each miss costs 20 points plus 2
- * per number it was off (capped at 10 off, so 22 to 40 points). A hit keeps
- * what is left; three misses leave whatever remains, never below 0.
+ * Score as a percentage. It starts at 0% and only grows: each drop is worth
+ * up to TRY_CAP for its try (100, 75, 50), the full amount for a hit and up
+ * to half of it for a near miss (less the further off, nothing from 12 away),
+ * and the score is the best drop so far. So any win beats any loss.
  */
-export function missCost(d) {
-  return 20 + 2 * Math.min(d, 10);
+export const TRY_CAP = [100, 75, 50];
+export function dropScore(d, i) {
+  const cap = TRY_CAP[i] ?? 0;
+  if (d === 0) return cap;
+  return Math.round(cap * 0.5 * Math.max(0, 1 - d / 12));
 }
 export function scoreFor(guesses) {
-  const lost = guesses.filter((g) => g.d > 0).reduce((s, g) => s + missCost(g.d), 0);
-  return Math.max(0, 100 - lost);
+  return guesses.reduce((best, g, i) => Math.max(best, dropScore(g.d, i)), 0);
 }
 
 export function trend(prevD, d) {
