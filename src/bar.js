@@ -497,7 +497,7 @@ export class NumberBar {
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
         rest: this.restFor(0),
-        fall: 18, // px: how quickly the wave drops away beside the bar
+        fall: 8, // px: how quickly the wave drops away beside the bar (a sharp fall)
         amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
       };
     }
