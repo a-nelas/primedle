@@ -19,8 +19,7 @@ const K = 0.5;
 const BETA = 0.42;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
-const FAST_K = 1100; // the same, much quicker, while the ball falls onto it
-const FAST_D = 2 * Math.sqrt(FAST_K) * 0.95;
+const DROP_RATE = 45; // 1/s: how quickly the wave chases its height while the ball falls
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MAX_SPARKS = 60;
 const SPARK_DENSITY = 25; // px of wave per twinkling sparkle (20 to 50 at once)
@@ -338,7 +337,8 @@ export class NumberBar {
     const busy = this.step(dt);
     this.draw();
     this.drawFx();
-    if (busy) this.raf = requestAnimationFrame((t2) => this.frame(t2));
+    // (a tween finishing inside step may already have queued the next frame)
+    if (busy && !this.raf) this.raf = requestAnimationFrame((t2) => this.frame(t2));
   }
 
   /** Number (in units) under a pointer at canvas x. */
@@ -404,10 +404,14 @@ export class NumberBar {
     const lo = Math.floor(this.cam - this.half - 4);
     const hi = Math.ceil(this.cam + this.half + 4);
     const peak = this.maxH;
+    // while the ball falls, the wave starts rising to meet it right away
+    // (fall is eased t³, so its cube root is the time through the fall)
+    const falling = this.mode === 'drop' && !this.frozen;
+    const reach = falling ? Math.max(this.prox, Math.cbrt(this.fall)) : this.prox;
     for (let n = lo; n <= hi; n++) {
       const rest = this.restFor(n);
       const d = n - this.ball;
-      const bell = (peak - rest) * this.lift * this.prox * profile(d / sigma, WAVE_TOP);
+      const bell = (peak - rest) * this.lift * reach * profile(d / sigma, WAVE_TOP);
       const target = Math.max(2, rest + bell);
       let b = this.nodes.get(n);
       if (!b) {
@@ -423,8 +427,14 @@ export class NumberBar {
         b.v = 0;
         continue;
       }
-      // while the ball falls, the wave answers fast enough to rise with it
-      const a = this.mode === 'drop' ? FAST_K * (target - b.h) - FAST_D * b.v : STIFF * (target - b.h) - DAMP * b.v;
+      if (falling) {
+        // a quick, smooth chase, fast enough to keep up with the slam
+        b.h += (target - b.h) * follow(DROP_RATE, dt);
+        b.v = 0;
+        busy = true;
+        continue;
+      }
+      const a = STIFF * (target - b.h) - DAMP * b.v;
       b.v += a * dt;
       b.h = Math.max(2, b.h + b.v * dt);
       if (Math.abs(b.v) > 0.3 || Math.abs(target - b.h) > 0.2) busy = true;
