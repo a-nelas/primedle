@@ -4,7 +4,7 @@ A daily number game. Every day there's a new number between 100 and 9,999. Move 
 
 You get 3 tries. The only hints are your drops, each colored from red (12 or more away) through yellow to green (spot on). The closest prime is never more than 18 away, and the ball reaches 24 either side.
 
-Your score starts at 0% and grows with your best drop: a hit is worth 100% on the first try, 75% on the second and 50% on the third, and a near miss earns up to half of that (less the further off, nothing from 12 away). After the game the answer is revealed and you can look around the number line.
+Your score is how close your best drop got to the prime: 100% on it, dropping evenly to 0% at 12 or more away. It doesn't matter which try it was. After the game the answer is revealed and you can look around the number line.
 
 Play at **https://a-nelas.github.io/primedle/**
 

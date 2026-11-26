@@ -32,19 +32,16 @@ export function hintColor(d) {
 }
 
 /**
- * Score as a percentage. It starts at 0% and only grows: each drop is worth
- * up to TRY_CAP for its try (100, 75, 50), the full amount for a hit and up
- * to half of it for a near miss (less the further off, nothing from 12 away),
- * and the score is the best drop so far. So any win beats any loss.
+ * Score as a percentage, from how close you got to the prime: 100% on it,
+ * dropping evenly to 0% at 12 or more away (the same scale as the hint
+ * colours). Which try it was doesn't matter. It starts at 0% and only grows:
+ * the score is your closest drop so far.
  */
-export const TRY_CAP = [100, 75, 50];
-export function dropScore(d, i) {
-  const cap = TRY_CAP[i] ?? 0;
-  if (d === 0) return cap;
-  return Math.round(cap * 0.5 * Math.max(0, 1 - d / 12));
+export function dropScore(d) {
+  return Math.round(100 * Math.max(0, 1 - d / 12));
 }
 export function scoreFor(guesses) {
-  return guesses.reduce((best, g, i) => Math.max(best, dropScore(g.d, i)), 0);
+  return guesses.reduce((best, g) => Math.max(best, dropScore(g.d)), 0);
 }
 
 export function trend(prevD, d) {

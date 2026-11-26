@@ -81,6 +81,7 @@ export class NumberBar {
     this.sink = 0; // drop: 0 → 1 as the ball falls on through the wave and off screen
     this.appear = 1; // the ball re-materialising for the next try, 0 → 1
     this.hit = null; // { u, color, t }: the bar a scored drop punches into the wave
+    this.plateau = null; // the flat top that bar presses into the wave
     this.tinted = new Map(); // colour -> ball sprite tinted that colour
     this.from = null; // where a drop started (viewport px)
     this.bvx = null; // ball position in viewport px
@@ -288,7 +289,19 @@ export class NumberBar {
     return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
   }
   surfaceY(u) {
-    return this.baseline - Math.max(3, this.springH(u));
+    let h = Math.max(3, this.springH(u));
+    // a scoring bar flattens the wave into its top: flat across the bar,
+    // easing smoothly back into the wave on either side (no corners)
+    const P = this.plateau;
+    if (P) {
+      const dx = Math.abs(this.xOf(u) - P.x);
+      let k = dx <= P.hw ? 1 : 1 - (dx - P.hw) / P.blend;
+      if (k > 0) {
+        k = k * k * (3 - 2 * k);
+        h += (P.h - h) * k * P.amt;
+      }
+    }
+    return this.baseline - h;
   }
   /** Where the bell (and the colour) is centred, in canvas x. */
   ballX() {
@@ -473,10 +486,21 @@ export class NumberBar {
       this.flash = Math.max(0, this.flash - dt / 0.4);
       busy = true;
     }
+    this.plateau = null;
     if (this.hit) {
       this.hit.t += dt;
       busy = true;
       if (this.hit.t > HIT_END) this.hit = null;
+    }
+    if (this.hit) {
+      const { width, shrink } = this.hitShape();
+      this.plateau = {
+        x: this.xOf(this.hit.u),
+        hw: width / 2,
+        h: Math.max(3, this.springH(this.hit.u)),
+        blend: Math.max(18, width * 0.9),
+        amt: 1 - shrink,
+      };
     }
 
     // the wave reaches up toward the ball: tall when it's near, low when far
@@ -1089,15 +1113,21 @@ export class NumberBar {
    * with the drop's colour from the baseline up to the wave, its top following
    * the wave's curve, then it narrows down into that drop's thin marker line.
    */
+  /** The scoring bar's current width and how far it has narrowed (0 → 1). */
+  hitShape() {
+    const H = this.hit;
+    const grow = clamp(H.t / 0.06, 0, 1);
+    const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
+    const wide = BALL_R * 2.2;
+    return { grow, shrink, width: Math.max(2, wide + (2 - wide) * shrink) };
+  }
+
   drawHit() {
     const { ctx } = this;
     const H = this.hit;
     const x = this.xOf(H.u);
     const base = this.baseline;
-    const grow = clamp(H.t / 0.06, 0, 1);
-    const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
-    const wide = BALL_R * 2.2;
-    const width = Math.max(2, wide * grow + (2 - wide) * shrink);
+    const { grow, shrink, width } = this.hitShape();
     // clip to the wave under the bar (fringe included), so the bar wraps the
     // wave's shape instead of poking square corners out of it
     const x0 = Math.floor(x - width / 2 - 3);
