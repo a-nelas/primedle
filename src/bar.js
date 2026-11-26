@@ -20,6 +20,10 @@ const BETA = 0.42;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
 const DROP_RATE = 45; // 1/s: how quickly the wave chases its height while the ball falls
+// how much of the way to full height the wave rises while the ball falls:
+// dropped from right at the wave it is already full; from far above it
+// only gets part of the way, so the rise scales with the drop
+const DROP_GAIN = 0.55;
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MAX_SPARKS = 60;
 const SPARK_DENSITY = 25; // px of wave per twinkling sparkle (20 to 50 at once)
@@ -404,10 +408,16 @@ export class NumberBar {
     const lo = Math.floor(this.cam - this.half - 4);
     const hi = Math.ceil(this.cam + this.half + 4);
     const peak = this.maxH;
-    // while the ball falls, the wave starts rising to meet it right away
-    // (fall is eased t³, so its cube root is the time through the fall)
+    // while the ball falls, the wave rises from where it was toward a height
+    // set by how far the ball was dropped (fall is eased t³, so its cube
+    // root is the time through the fall)
     const falling = this.mode === 'drop' && !this.frozen;
-    const reach = falling ? Math.max(this.prox, Math.cbrt(this.fall)) : this.prox;
+    let reach = this.prox;
+    if (falling) {
+      const p0 = this.dropProx;
+      const top = p0 + (1 - p0) * DROP_GAIN;
+      reach = p0 + (top - p0) * Math.cbrt(this.fall);
+    }
     for (let n = lo; n <= hi; n++) {
       const rest = this.restFor(n);
       const d = n - this.ball;
@@ -617,6 +627,7 @@ export class NumberBar {
     this.mode = 'drop';
     this.target = v;
     this.from = { x: this.bvx ?? 0, y: this.bvy ?? 0 };
+    this.dropProx = this.prox; // how close to the wave it was let go
     this.slide = 0;
     this.fall = 0;
     const linear = (t) => t;
