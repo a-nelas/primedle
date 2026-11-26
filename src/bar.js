@@ -29,11 +29,6 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
-// beside a scoring bar the wave runs down at about 40°, bending over the
-// bar's edge, until it meets the low part of the wave and eases into it
-const BAR_SLOPE = Math.tan((40 * Math.PI) / 180);
-const BAR_ROUND = 10; // px: how gently the wave bends over the bar's edge
-const BAR_MEET = 16; // px: how softly the slope eases into the wave below
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
@@ -290,18 +285,12 @@ export class NumberBar {
   surfaceY(u) {
     let h = Math.max(3, this.springH(u));
     // a scoring bar shapes the wave around it: flat across the bar's top,
-    // then bending over its edges and running down at about 40° until it
-    // meets the low part of the wave (all smooth: no corners)
+    // then falling smoothly away right from its edges (a gaussian shoulder,
+    // level where it meets the bar, so there's no corner)
     const P = this.plateau;
     if (P) {
       const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
-      let shape = P.h;
-      if (dx > 0) {
-        const slope = P.h - BAR_SLOPE * (Math.sqrt(dx * dx + BAR_ROUND * BAR_ROUND) - BAR_ROUND);
-        // a smooth maximum of the slope and the wave, exact at the bar's edge
-        const k = BAR_MEET * Math.min(1, dx / (2 * BAR_MEET));
-        shape = (slope + h + Math.sqrt((slope - h) ** 2 + k * k)) / 2;
-      }
+      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
       h += (shape - h) * P.amt;
     }
     return this.baseline - h;
@@ -500,6 +489,8 @@ export class NumberBar {
         x: this.xOf(this.hit.u),
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
+        rest: this.restFor(0),
+        fall: 8, // px: how quickly the wave drops away beside the bar (a sharp fall)
         amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
       };
     }
