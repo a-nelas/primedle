@@ -77,15 +77,9 @@ export class NumberBar {
     this.slide = 0; // drop: lock-on progress toward the target, 0 → 1
     this.fall = 0; // drop: slam progress, 0 → 1
     this.target = null; // drop: the whole number being hit
-    this.shake = 0; // impact aftermath, each 1 → 0
-    this.shakeT = 0;
-    this.sx = 0; // current screen-shake offset (px)
-    this.sy = 0;
-    this.impactAt = null; // { x, y } viewport px
     this.frozen = false; // the wave holds still while a drop plays out
     this.sink = 0; // drop: 0 → 1 as the ball falls on through the wave and off screen
     this.appear = 1; // the ball re-materialising for the next try, 0 → 1
-    this.debris = []; // fragments thrown up by the impact
     this.hit = null; // { u, color, t }: the bar a scored drop punches into the wave
     this.tinted = new Map(); // colour -> ball sprite tinted that colour
     this.from = null; // where a drop started (viewport px)
@@ -479,28 +473,6 @@ export class NumberBar {
       this.flash = Math.max(0, this.flash - dt / 0.4);
       busy = true;
     }
-    // impact aftermath
-    if (this.shake > 0 || this.debris.length) busy = true;
-    this.shake = Math.max(0, this.shake - dt / 0.34);
-    this.shakeT -= dt;
-    if (this.shake <= 0) {
-      this.sx = this.sy = 0;
-    } else if (this.shakeT <= 0) {
-      // stepped, mostly vertical jolts, like a heavy machine
-      this.shakeT = 0.034;
-      this.sx = Math.round((Math.random() * 2 - 1) * 3 * this.shake);
-      this.sy = Math.round((Math.random() * 2 - 1) * 8 * this.shake);
-    }
-    const shift = this.sx || this.sy ? `translate(${this.sx}px, ${this.sy}px)` : '';
-    if (this.canvas.parentElement.style.transform !== shift) this.canvas.parentElement.style.transform = shift;
-    for (const p of this.debris) {
-      p.life += dt;
-      p.vy += 1500 * dt;
-      p.x += p.vx * dt;
-      p.y += p.vy * dt;
-      p.rot += p.spin * dt;
-    }
-    this.debris = this.debris.filter((p) => p.life < p.max);
     if (this.hit) {
       this.hit.t += dt;
       busy = true;
@@ -603,30 +575,7 @@ export class NumberBar {
     const accepted = !!res;
     const color = typeof res === 'string' ? res : null;
     if (color) this.hit = { u: v, color, t: 0 };
-    this.impactAt = { x: this.bvx, y: this.bvy + BALL_R };
     if (!REDUCED) {
-      this.shake = 1;
-      this.shakeT = 0.045;
-      this.sx = 0;
-      this.sy = 8; // first jolt goes down with the ball
-      for (let i = 0; i < 14; i++) {
-        const a = -Math.PI / 2 + (Math.random() * 2 - 1) * 1.1;
-        const sp = 260 + Math.random() * 360;
-        this.debris.push({
-          x: this.impactAt.x + (Math.random() * 2 - 1) * 8,
-          y: this.impactAt.y,
-          vx: Math.cos(a) * sp,
-          vy: Math.sin(a) * sp,
-          rot: Math.random() * Math.PI,
-          spin: (Math.random() * 2 - 1) * 14,
-          size: 1.1 + Math.random() * 1.4,
-          shape: Math.floor(Math.random() * SHAPES.length),
-          life: 0,
-          max: 0.45 + Math.random() * 0.35,
-          white: Math.random() < 0.5,
-          color: color || '#ecc8ff',
-        });
-      }
       // a brief brightness pop on the whole scene
       const game = this.canvas.parentElement;
       game.classList.remove('impact');
@@ -1045,23 +994,6 @@ export class NumberBar {
       }
     }
 
-    // impact fragments, in the drop's colour
-    if (this.debris.length) {
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      for (const d of this.debris) {
-        const a = Math.round((1 - d.life / d.max) * 4) / 4;
-        if (a <= 0) continue;
-        const px = Math.round(d.x);
-        const py = Math.round(d.y);
-        g.globalAlpha = a * 0.8;
-        NumberBar.poly(g, d, px - 1, py, 'rgb(255, 50, 140)');
-        NumberBar.poly(g, d, px + 1, py, 'rgb(60, 220, 255)');
-        g.globalAlpha = a;
-        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : d.color);
-      }
-      g.restore();
-    }
 
     // the invisible wall lights up where the ball pushes on it
     const f = this.flash;
@@ -1154,21 +1086,35 @@ export class NumberBar {
 
   /**
    * The bar a scored drop punches into the wave: as wide as the ball, filled
-   * with the drop's colour from the baseline up to where the ball sits, then
-   * it narrows down into that drop's thin marker line.
+   * with the drop's colour from the baseline up to the wave, its top following
+   * the wave's curve, then it narrows down into that drop's thin marker line.
    */
   drawHit() {
     const { ctx } = this;
     const H = this.hit;
     const x = this.xOf(H.u);
-    const top = this.surfaceY(H.u);
     const base = this.baseline;
     const grow = clamp(H.t / 0.06, 0, 1);
     const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
     const wide = BALL_R * 2.2;
     const width = Math.max(2, wide * grow + (2 - wide) * shrink);
-    const y = top + (base - top) * (1 - grow);
+    // clip to the wave under the bar (fringe included), so the bar wraps the
+    // wave's shape instead of poking square corners out of it
+    const x0 = Math.floor(x - width / 2 - 3);
+    const x1 = Math.ceil(x + width / 2 + 3);
+    let top = base;
     ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x0, base);
+    for (let xx = x0; xx <= x1; xx++) {
+      const sy = this.surfaceY(this.uOf(xx));
+      top = Math.min(top, sy);
+      ctx.lineTo(xx, sy);
+    }
+    ctx.lineTo(x1, base);
+    ctx.closePath();
+    ctx.clip();
+    const y = top + (base - top) * (1 - grow);
     ctx.fillStyle = H.color; // one flat, opaque colour
     ctx.shadowColor = H.color;
     ctx.shadowBlur = 18;

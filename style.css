@@ -115,7 +115,7 @@ body::after {
      stack up into darker patches */
   color: #e9e8ee;
   opacity: 0.055;
-  --t: 0.062em; /* how much each pixel stroke is fattened */
+  --t: 0.032em; /* how much each pixel stroke is fattened */
   text-shadow:
     /* square dilation: offset copies all round keep the pixel corners sharp */
     var(--t) 0, calc(-1 * var(--t)) 0, 0 var(--t), 0 calc(-1 * var(--t)),
