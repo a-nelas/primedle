@@ -75,7 +75,7 @@ function handleDrop(v) {
   else if (state.guesses.length >= MAX_TRIES) finish(false);
   store.set(STATE_KEY, state);
   render();
-  return true;
+  return hintColor(d); // accepted: the bar takes this colour
 }
 
 function finish(won) {

@@ -29,6 +29,8 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
+const HIT_HOLD = 0.35; // s the impact bar stays wide
+const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
 const TAP_TIME = 450; // ms
 
@@ -78,13 +80,14 @@ export class NumberBar {
     this.target = null; // drop: the whole number being hit
     this.shake = 0; // impact aftermath, each 1 → 0
     this.squash = 0;
-    this.boom = 0;
     this.shakeT = 0;
     this.sx = 0; // current screen-shake offset (px)
     this.sy = 0;
     this.impactAt = null; // { x, y } viewport px
     this.ripples = []; // dips running outward along the wave from the impact
     this.debris = []; // fragments thrown up by the impact
+    this.hit = null; // { u, color, t }: the bar a scored drop punches into the wave
+    this.tinted = new Map(); // colour -> ball sprite tinted that colour
     this.from = null; // where a drop started (viewport px)
     this.bvx = null; // ball position in viewport px
     this.bvy = null;
@@ -474,9 +477,8 @@ export class NumberBar {
       busy = true;
     }
     // impact aftermath
-    if (this.shake > 0 || this.squash > 0 || this.boom > 0 || this.ripples.length || this.debris.length) busy = true;
+    if (this.shake > 0 || this.squash > 0 || this.ripples.length || this.debris.length) busy = true;
     this.squash = Math.max(0, this.squash - dt / 0.22);
-    this.boom = Math.max(0, this.boom - dt / 0.45);
     this.shake = Math.max(0, this.shake - dt / 0.34);
     this.shakeT -= dt;
     if (this.shake <= 0) {
@@ -509,6 +511,11 @@ export class NumberBar {
       p.rot += p.spin * dt;
     }
     this.debris = this.debris.filter((p) => p.life < p.max);
+    if (this.hit) {
+      this.hit.t += dt;
+      busy = true;
+      if (this.hit.t > HIT_END) this.hit = null;
+    }
 
     // the wave reaches up toward the ball: tall when it's near, low when far
     this.prox = Math.exp(-Math.max(0, wall - this.bvy) / (REACH * this.maxH));
@@ -601,12 +608,16 @@ export class NumberBar {
 
   impact(v) {
     sfx.crash();
+    // score it first: an accepted drop comes back with its hint colour
+    const res = this.onDrop(this.center + v);
+    const accepted = !!res;
+    const color = typeof res === 'string' ? res : null;
+    if (color) this.hit = { u: v, color, t: 0 };
     for (let d = -2; d <= 2; d++) {
       const b = this.nodes.get(v + d);
       if (b) b.v -= 280 * Math.exp(-(d * d) / 2);
     }
     this.squash = 1;
-    this.boom = 1;
     this.impactAt = { x: this.bvx, y: this.bvy + BALL_R };
     if (!REDUCED) {
       this.ripples.push({ v, t: 0, done: 2 });
@@ -629,6 +640,7 @@ export class NumberBar {
           life: 0,
           max: 0.45 + Math.random() * 0.35,
           white: Math.random() < 0.5,
+          color: color || '#ecc8ff',
         });
       }
       // a brief brightness pop on the whole scene
@@ -638,7 +650,6 @@ export class NumberBar {
       game.classList.add('impact');
     }
     this.kick();
-    const accepted = this.onDrop(this.center + v);
     this.animate({}, accepted ? 0.7 : 0.15, easeOut, () => {
       if (!this.enabled) {
         this.mode = 'idle';
@@ -883,6 +894,8 @@ export class NumberBar {
       }
       stem(u, color, 2, 10);
     }
+    if (this.hit) this.drawHit();
+
     // N: a straight line from the baseline to the top of the screen
     const x0 = this.xOf(0);
     if (x0 >= -2 && x0 <= w + 2) {
@@ -1033,29 +1046,7 @@ export class NumberBar {
       }
     }
 
-    // impact: a flat shockwave ring, a flash and flying fragments
-    if (this.impactAt && this.boom > 0.01) {
-      const { x: ix, y: iy } = this.impactAt;
-      const p = 1 - this.boom;
-      const k = Math.round(this.boom * 4) / 4; // stepped fade
-      g.save();
-      g.globalCompositeOperation = 'lighter';
-      const fl = g.createRadialGradient(ix, iy, 0, ix, iy, 70);
-      fl.addColorStop(0, `rgba(255, 255, 255, ${0.8 * this.boom ** 2})`);
-      fl.addColorStop(1, 'rgba(220, 120, 255, 0)');
-      g.fillStyle = fl;
-      g.fillRect(ix - 70, iy - 70, 140, 140);
-      const r = 10 + 170 * easeOut(p);
-      for (const [dx, color] of [[-2, 'rgb(255, 50, 140)'], [2, 'rgb(60, 220, 255)'], [0, '#ffffff']]) {
-        g.globalAlpha = k * (dx ? 0.7 : 1);
-        g.strokeStyle = color;
-        g.lineWidth = dx ? 1.5 : 2;
-        g.beginPath();
-        g.ellipse(ix + dx, iy, r, r * 0.22, 0, 0, Math.PI * 2);
-        g.stroke();
-      }
-      g.restore();
-    }
+    // impact fragments, in the drop's colour
     if (this.debris.length) {
       g.save();
       g.globalCompositeOperation = 'lighter';
@@ -1068,7 +1059,7 @@ export class NumberBar {
         NumberBar.poly(g, d, px - 1, py, 'rgb(255, 50, 140)');
         NumberBar.poly(g, d, px + 1, py, 'rgb(60, 220, 255)');
         g.globalAlpha = a;
-        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : '#ecc8ff');
+        NumberBar.poly(g, d, px, py, d.white ? '#f4f3f8' : d.color);
       }
       g.restore();
     }
@@ -1131,7 +1122,15 @@ export class NumberBar {
         ky = 1 - 0.42 * q;
       }
       const cy = y + BALL_R * (1 - ky);
-      g.drawImage(S.canvas, x - (S.size * kx) / 2, cy - (S.size * ky) / 2, S.size * kx, S.size * ky);
+      const bx0 = x - (S.size * kx) / 2;
+      const by0 = cy - (S.size * ky) / 2;
+      g.drawImage(S.canvas, bx0, by0, S.size * kx, S.size * ky);
+      const tint = this.hit ? clamp(1 - (this.hit.t - HIT_HOLD) / 0.45, 0, 1) : 0;
+      if (tint > 0) {
+        g.globalAlpha = Math.round(tint * 4) / 4; // stepped, like the rest of the CRT
+        g.drawImage(this.tintedBall(this.hit.color), bx0, by0, S.size * kx, S.size * ky);
+        g.globalAlpha = 1;
+      }
       if (f > 0.01) {
         // it flares white on impact
         g.save();
@@ -1144,6 +1143,60 @@ export class NumberBar {
         g.restore();
       }
     }
+  }
+
+  /** The ball sprite washed in a colour (cached per colour). */
+  tintedBall(color) {
+    let c = this.tinted.get(color);
+    if (c) return c;
+    const S = this.ballSprite;
+    c = document.createElement('canvas');
+    c.width = S.canvas.width;
+    c.height = S.canvas.height;
+    const g = c.getContext('2d');
+    g.drawImage(S.canvas, 0, 0);
+    g.globalCompositeOperation = 'source-atop';
+    g.globalAlpha = 0.78;
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+    this.tinted.set(color, c);
+    return c;
+  }
+
+  /**
+   * The bar a scored drop punches into the wave: as wide as the ball, filled
+   * with the drop's colour from the baseline up to where the ball sits, then
+   * it narrows down into that drop's thin marker line.
+   */
+  drawHit() {
+    const { ctx } = this;
+    const H = this.hit;
+    const x = this.xOf(H.u);
+    const top = this.surfaceY(H.u);
+    const base = this.baseline;
+    const grow = clamp(H.t / 0.06, 0, 1);
+    const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
+    const wide = BALL_R * 2.2;
+    const width = Math.max(2, wide * grow + (2 - wide) * shrink);
+    const y = top + (base - top) * (1 - grow);
+    ctx.save();
+    ctx.globalAlpha = 1 - 0.3 * shrink;
+    ctx.fillStyle = H.color;
+    ctx.shadowColor = H.color;
+    ctx.shadowBlur = 18;
+    ctx.fillRect(x - width / 2, y, width, base - y);
+    ctx.shadowBlur = 0;
+    // CRT fringe on its edges and a hot core
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.6 * (1 - shrink);
+    ctx.fillStyle = 'rgb(255, 50, 140)';
+    ctx.fillRect(x - width / 2 - 2, y, 2, base - y);
+    ctx.fillStyle = 'rgb(60, 220, 255)';
+    ctx.fillRect(x + width / 2, y, 2, base - y);
+    ctx.globalAlpha = 0.35 * (1 - shrink);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - width / 6, y, width / 3, base - y);
+    ctx.restore();
   }
 
   edgeArrow(side, y, color) {

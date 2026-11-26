@@ -41,7 +41,7 @@ function crunchyNoise(seconds) {
 }
 
 /** A square (or triangle) tone sliding from f0 to f1 with a short decay. */
-function tone(type, f0, f1, dur, gain, at = ctx.currentTime) {
+function tone(type, f0, f1, dur, gain, at = ctx.currentTime, lowpass = 0) {
   const o = ctx.createOscillator();
   const g = ctx.createGain();
   o.type = type;
@@ -49,7 +49,14 @@ function tone(type, f0, f1, dur, gain, at = ctx.currentTime) {
   if (f1 !== f0) o.frequency.exponentialRampToValueAtTime(f1, at + dur);
   g.gain.setValueAtTime(gain, at);
   g.gain.exponentialRampToValueAtTime(0.0001, at + dur);
-  o.connect(g).connect(out);
+  if (lowpass) {
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = lowpass;
+    o.connect(lp).connect(g).connect(out);
+  } else {
+    o.connect(g).connect(out);
+  }
   o.start(at);
   o.stop(at + dur + 0.02);
 }
@@ -65,8 +72,8 @@ export function tick(offset) {
   if (now - lastTick < 0.025) return; // a fast sweep stays a buzz, not a pile-up
   lastTick = now;
   const semis = Math.round(Math.max(-24, Math.min(24, offset)) / 2);
-  const f = 660 * 2 ** (semis / 12);
-  tone('square', f, f, 0.03, 0.35, now);
+  const f = 247 * 2 ** (semis / 12); // around B3: a low, bassy blip
+  tone('square', f, f * 0.94, 0.045, 0.55, now, 1500); // softened top end
 }
 
 /** The slam: a falling square-wave zip. */
