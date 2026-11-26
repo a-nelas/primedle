@@ -29,12 +29,6 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
-// the steps magnify around the ball, like a dock: the number under it is
-// MAG× as wide as the rest, its neighbours a little less, tapering off
-const MAG = 2.2;
-const MAG_S = 1.0; // units: how quickly the widening falls off to either side
-const MAG_A = (MAG - 1) * MAG_S;
-const warp = (d) => d + MAG_A * Math.atan(d / MAG_S);
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
@@ -87,6 +81,7 @@ export class NumberBar {
     this.sink = 0; // drop: 0 → 1 as the ball falls on through the wave and off screen
     this.appear = 1; // the ball re-materialising for the next try, 0 → 1
     this.hit = null; // { u, color, t }: the bar a scored drop punches into the wave
+    this.plateau = null; // the flat top that bar presses into the wave
     this.tinted = new Map(); // colour -> ball sprite tinted that colour
     this.from = null; // where a drop started (viewport px)
     this.bvx = null; // ball position in viewport px
@@ -273,26 +268,38 @@ export class NumberBar {
     return this.maxH * 0.14;
   }
   xOf(u) {
-    return this.w / 2 + (this.ball - this.cam + warp(u - this.ball)) * this.ppu;
+    return this.w / 2 + (u - this.cam) * this.ppu;
   }
   uOf(x) {
-    // invert the warp (monotonic, and it moves things at most MAG_A·π/2)
-    const t = (x - this.w / 2) / this.ppu + this.cam - this.ball;
-    let lo = t - MAG_A * 1.6;
-    let hi = t + MAG_A * 1.6;
-    for (let i = 0; i < 30; i++) {
-      const m = (lo + hi) / 2;
-      if (warp(m) < t) lo = m;
-      else hi = m;
-    }
-    return this.ball + (lo + hi) / 2;
+    return this.cam + (x - this.w / 2) / this.ppu;
   }
   nodeH(n) {
     return this.nodes.get(n)?.h ?? this.restFor(n);
   }
-  /** The wave is a staircase: one flat step per whole number. */
+  /** Smooth height through the spring nodes (Catmull-Rom). */
+  springH(u) {
+    const n = Math.floor(u);
+    const t = u - n;
+    const p0 = this.nodeH(n - 1);
+    const p1 = this.nodeH(n);
+    const p2 = this.nodeH(n + 1);
+    const p3 = this.nodeH(n + 2);
+    const t2 = t * t;
+    const t3 = t2 * t;
+    return 0.5 * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+  }
   surfaceY(u) {
-    return this.baseline - Math.max(3, this.nodeH(Math.round(u)));
+    let h = Math.max(3, this.springH(u));
+    // a scoring bar shapes the wave around it: flat across the bar's top,
+    // then falling smoothly away right from its edges (a gaussian shoulder,
+    // level where it meets the bar, so there's no corner)
+    const P = this.plateau;
+    if (P) {
+      const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
+      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
+      h += (shape - h) * P.amt;
+    }
+    return this.baseline - h;
   }
   /** Where the bell (and the colour) is centred, in canvas x. */
   ballX() {
@@ -477,10 +484,22 @@ export class NumberBar {
       this.flash = Math.max(0, this.flash - dt / 0.4);
       busy = true;
     }
+    this.plateau = null;
     if (this.hit) {
       this.hit.t += dt;
       busy = true;
       if (this.hit.t > HIT_END) this.hit = null;
+    }
+    if (this.hit) {
+      const { grow, width, shrink } = this.hitShape();
+      this.plateau = {
+        x: this.xOf(this.hit.u),
+        hw: width / 2,
+        h: Math.max(3, this.springH(this.hit.u)),
+        rest: this.restFor(0),
+        fall: 18, // px: how quickly the wave drops away beside the bar
+        amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
+      };
     }
 
     // the wave reaches up toward the ball: tall when it's near, low when far
@@ -721,10 +740,15 @@ export class NumberBar {
       ctx.restore();
     }
 
-    // the wave: a staircase of bars, one per whole number, widest by the ball
-    const steps = this.steps();
+    // the wave
+    const pts = [];
+    for (let x = 0; x <= w + 3; x += 3) pts.push([x, this.surfaceY(this.uOf(x))]);
+
     ctx.beginPath();
-    for (const st of steps) ctx.rect(st.x0, st.y, st.x1 - st.x0, base - st.y);
+    ctx.moveTo(0, base);
+    for (const [x, y] of pts) ctx.lineTo(x, y);
+    ctx.lineTo(w, base);
+    ctx.closePath();
     // colour spreads sideways: richest around the ball, fading toward the sides
     const p = clamp((showBall ? bx : w / 2) / w, 0, 1);
     const fadeStops = (g, rgb, peak) => {
@@ -757,23 +781,21 @@ export class NumberBar {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.lineWidth = 1.4;
-    ctx.lineJoin = 'miter';
+    ctx.lineJoin = 'round';
     for (const [dx, rgb, peak] of [[-1.6, '255, 50, 140', 0.55], [1.6, '60, 220, 255', 0.4]]) {
       ctx.strokeStyle = fadeStops(ctx.createLinearGradient(0, 0, w, 0), rgb, peak);
       ctx.beginPath();
-      for (const st of steps) {
-        ctx.moveTo(st.x0 + dx, base);
-        ctx.lineTo(st.x0 + dx, st.y);
-        ctx.lineTo(st.x1 + dx, st.y);
-        ctx.lineTo(st.x1 + dx, base);
-      }
+      pts.forEach(([x, y], i) => (i ? ctx.lineTo(x + dx, y) : ctx.moveTo(x + dx, y)));
       ctx.stroke();
     }
     ctx.restore();
     ctx.fillStyle = core;
 
     ctx.beginPath();
-    for (const st of steps) ctx.rect(st.x0, base, st.x1 - st.x0, (base - st.y) * 0.28);
+    ctx.moveTo(0, base);
+    for (const [x, y] of pts) ctx.lineTo(x, base + (base - y) * 0.28);
+    ctx.lineTo(w, base);
+    ctx.closePath();
     ctx.globalAlpha = 0.14;
     ctx.fill();
     ctx.globalAlpha = 1;
@@ -935,21 +957,6 @@ export class NumberBar {
     }
   }
 
-  /** The visible steps: x0..x1 (a thin gap between neighbours) and top y. */
-  steps() {
-    const out = [];
-    const n0 = Math.floor(this.uOf(0)) - 1;
-    const n1 = Math.ceil(this.uOf(this.w)) + 1;
-    for (let n = n0; n <= n1; n++) {
-      const a = this.xOf(n - 0.5);
-      const b = this.xOf(n + 0.5);
-      if (b < -4 || a > this.w + 4) continue;
-      const gap = clamp((b - a) * 0.08, 1, 3) / 2;
-      out.push({ n, x0: a + gap, x1: b - gap, y: this.surfaceY(n) });
-    }
-    return out;
-  }
-
   /** The ball, its aim line and the wall flash, on the full-screen overlay. */
   drawFx() {
     const g = this.fxCtx;
@@ -1101,25 +1108,42 @@ export class NumberBar {
   }
 
   /**
-   * The bar a scored drop punches into the wave: its number's whole step,
-   * filled with the drop's colour from the baseline up, then it narrows down
-   * into that drop's thin marker line.
+   * The bar a scored drop punches into the wave: as wide as the ball, filled
+   * with the drop's colour from the baseline up to the wave, its top following
+   * the wave's curve, then it narrows down into that drop's thin marker line.
    */
+  /** The scoring bar's current width and how far it has narrowed (0 → 1). */
+  hitShape() {
+    const H = this.hit;
+    const grow = clamp(H.t / 0.06, 0, 1);
+    const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
+    const wide = BALL_R * 2.2;
+    return { grow, shrink, width: Math.max(2, wide + (2 - wide) * shrink) };
+  }
+
   drawHit() {
     const { ctx } = this;
     const H = this.hit;
+    const x = this.xOf(H.u);
     const base = this.baseline;
-    const grow = clamp(H.t / 0.06, 0, 1);
-    const shrink = easeInOut(clamp((H.t - HIT_HOLD) / (HIT_END - HIT_HOLD), 0, 1));
-    const a = this.xOf(H.u - 0.5);
-    const b = this.xOf(H.u + 0.5);
-    const gap = clamp((b - a) * 0.08, 1, 3) / 2;
-    const full = b - a - 2 * gap;
-    const width = Math.max(2, full + (2 - full) * shrink);
-    const x = (a + b) / 2;
-    const top = this.surfaceY(H.u);
-    const y = top + (base - top) * (1 - grow);
+    const { grow, shrink, width } = this.hitShape();
+    // clip to the wave under the bar (fringe included), so the bar wraps the
+    // wave's shape instead of poking square corners out of it
+    const x0 = Math.floor(x - width / 2 - 3);
+    const x1 = Math.ceil(x + width / 2 + 3);
+    let top = base;
     ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(x0, base);
+    for (let xx = x0; xx <= x1; xx++) {
+      const sy = this.surfaceY(this.uOf(xx));
+      top = Math.min(top, sy);
+      ctx.lineTo(xx, sy);
+    }
+    ctx.lineTo(x1, base);
+    ctx.closePath();
+    ctx.clip();
+    const y = top + (base - top) * (1 - grow);
     ctx.fillStyle = H.color; // one flat, opaque colour
     ctx.shadowColor = H.color;
     ctx.shadowBlur = 18;
