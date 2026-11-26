@@ -887,6 +887,13 @@ export class NumberBar {
       ctx.restore();
     }
 
+    // where the daily number's label sits under the baseline (off screen, it
+    // waits at that edge)
+    const xN = this.xOf(0);
+    const L = this.labelSprite;
+    const nOn = xN >= PAD - 6 && xN <= w - PAD + 6;
+    const nLeft = L ? (nOn ? xN - L.w / 2 : xN < w / 2 ? 16 : w - 16 - L.w) : 0;
+
     // after the game: the closest prime(s), in green
     if (this.reveal > 0.01) {
       this.answers.forEach((a, i) => {
@@ -913,24 +920,25 @@ export class NumberBar {
         line(1.5, '60, 220, 255', 1.2, 0.45);
         ctx.globalCompositeOperation = 'source-over';
         line(0, '125, 255, 168', 2, 0.95);
-        const L = this.answerLabels?.[i];
-        if (L) ctx.drawImage(L.canvas, x - L.w / 2, this.surfaceY(u) - L.h - 10, L.w, L.h);
+        // its value under the baseline, like the daily number's, stepping
+        // aside if the two labels would overlap
+        const A = this.answerLabels?.[i];
+        if (A) {
+          let ax = x - A.w / 2;
+          if (L && ax < nLeft + L.w + 4 && ax + A.w > nLeft - 4) {
+            ax = u > 0 ? nLeft + L.w + 4 : nLeft - 4 - A.w;
+          }
+          ax = clamp(ax, 4, w - 4 - A.w);
+          ctx.drawImage(A.canvas, ax, base + 6, A.w, A.h);
+        }
         ctx.restore();
       });
     }
 
-    // daily number (the only digits on the bar), CRT style
-    const xN = this.xOf(0);
-    const L = this.labelSprite;
+    // daily number, CRT style
     if (L) {
-      if (xN >= PAD - 6 && xN <= w - PAD + 6) {
-        ctx.drawImage(L.canvas, xN - L.w / 2, base + 6, L.w, L.h);
-      } else {
-        const side = xN < w / 2 ? 'left' : 'right';
-        this.edgeArrow(side, base - 20, '#ffffff');
-        const lx = side === 'left' ? 16 : w - 16 - L.w;
-        ctx.drawImage(L.canvas, lx, base + 6, L.w, L.h);
-      }
+      if (!nOn) this.edgeArrow(xN < w / 2 ? 'left' : 'right', base - 20, '#ffffff');
+      ctx.drawImage(L.canvas, nLeft, base + 6, L.w, L.h);
     }
 
     // sparkles: small CRT polygons with an RGB fringe, pixel-snapped
