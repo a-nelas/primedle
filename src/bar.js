@@ -1180,22 +1180,18 @@ export class NumberBar {
     const width = Math.max(2, wide * grow + (2 - wide) * shrink);
     const y = top + (base - top) * (1 - grow);
     ctx.save();
-    ctx.globalAlpha = 1 - 0.3 * shrink;
-    ctx.fillStyle = H.color;
+    ctx.fillStyle = H.color; // one flat, opaque colour
     ctx.shadowColor = H.color;
     ctx.shadowBlur = 18;
     ctx.fillRect(x - width / 2, y, width, base - y);
     ctx.shadowBlur = 0;
-    // CRT fringe on its edges and a hot core
+    // CRT fringe on its edges; the face itself stays flat
     ctx.globalCompositeOperation = 'lighter';
     ctx.globalAlpha = 0.6 * (1 - shrink);
     ctx.fillStyle = 'rgb(255, 50, 140)';
     ctx.fillRect(x - width / 2 - 2, y, 2, base - y);
     ctx.fillStyle = 'rgb(60, 220, 255)';
     ctx.fillRect(x + width / 2, y, 2, base - y);
-    ctx.globalAlpha = 0.35 * (1 - shrink);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x - width / 6, y, width / 3, base - y);
     ctx.restore();
   }
 
