@@ -163,7 +163,9 @@ test('saved game: a finished game comes back finished', () => {
 test('facts: the answer and the daily number', async () => {
   const { primeFacts, numberFacts, factorize } = await import('../src/facts.js');
   assert.deepEqual(primeFacts(2887), ['418th prime', 'next prime: 2897']);
-  assert.deepEqual(numberFacts(2891), ['7² × 59', '3+31+2857, all prime']);
+  assert.deepEqual(numberFacts(2891), ['7² × 59']); // nothing stands out: just the factors
+  assert.equal(numberFacts(2862)[1], '= 53 × 54');
+  assert.equal(numberFacts(7777)[1], 'all one digit');
   assert.equal(primeFacts(8191)[1], '2¹³ − 1, Mersenne');
   assert.equal(primeFacts(1009)[1], 'smallest 4-digit prime');
   assert.equal(primeFacts(7919)[0], '1000th prime');

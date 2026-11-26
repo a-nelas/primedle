@@ -94,7 +94,7 @@ const FAMOUS_NUMBERS = {
   1089: '×9 = 9801',
 };
 
-/** Two short lines about composite n: its factors, then one more. */
+/** Composite n: its factors, then one more line if something stands out. */
 export function numberFacts(n) {
   const f = factorize(n);
   const lines = [f.map(([q, e]) => (e > 1 ? `${q}${sup(e)}` : `${q}`)).join(' × ')];
@@ -108,25 +108,16 @@ export function numberFacts(n) {
   if (isFibonacci(n)) add('a Fibonacci number');
   const t = Math.round((Math.sqrt(8 * n + 1) - 1) / 2);
   if ((t * (t + 1)) / 2 === n) add(`1 + 2 + … + ${t}`);
+  const k = Math.floor(Math.sqrt(n));
+  if (k * (k + 1) === n) add(`= ${k} × ${k + 1}`);
+  if (new Set(digits).size === 1) add('all one digit');
   if (isPalindrome(n)) add('a palindrome');
+  const sq = n * n;
+  const cut = 10 ** String(n).length;
+  if (Math.floor(sq / cut) + (sq % cut) === n) add(`${n}² → ${Math.floor(sq / cut)}+${sq % cut}`);
   const ds = digits.reduce((s, d) => s + d, 0);
   if (n % ds === 0) add(`÷ its digit sum, ${ds}`);
-  add(primeSum(n));
-  return lines;
-}
-
-/**
- * n as a sum of primes, smallest first: two for an even number (Goldbach),
- * else 2 + a prime, else three (3 + two more).
- */
-function primeSum(n) {
-  const pair = (m) => {
-    for (let p = 2; p <= m / 2; p++) if (isPrime(p) && isPrime(m - p)) return [p, m - p];
-    return null;
-  };
-  if (n % 2 === 0) return `${pair(n).join('+')}, both prime`;
-  if (isPrime(n - 2)) return `2+${n - 2}, both prime`;
-  return `${[3, ...pair(n - 3)].join('+')}, all prime`;
+  return lines; // nothing special: just the factors
 }
 
 function gcd(a, b) {
