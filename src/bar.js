@@ -47,7 +47,7 @@ const MORPH_K = 320;
 const MORPH_D = 2 * Math.sqrt(MORPH_K) * 0.28;
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
-const TAP_SLOP = 8; // px a tap may move and still count as a click
+const TAP_SLOP = 10; // px a tap may move and still count as a click
 const TAP_TIME = 450; // ms
 
 const CRT_FONT = 'VT323';
@@ -733,10 +733,10 @@ export class NumberBar {
 
   // ---- input -------------------------------------------------------------
 
-  engage(e) {
+  engage(x, y) {
     this.engaged = true;
-    this.mx = e.clientX;
-    this.my = e.clientY;
+    this.mx = x;
+    this.my = y;
     this.kick();
   }
 
@@ -746,39 +746,63 @@ export class NumberBar {
     this.kick();
   }
 
+  // Mouse: the ball follows the pointer, and a click drops it.
+  // Touch and pen: dragging anywhere moves the ball from where it is (like a
+  // trackpad, so the finger never covers it), it stays put when the finger
+  // lifts, and a tap anywhere drops it.
+
   onDown(e) {
-    if (this.mode === 'drop' || e.button > 0) return;
+    if (this.mode === 'drop' || e.button > 0 || !e.isPrimary) return;
     if (!this.enabled && this.focus === null) return;
     e.preventDefault();
     this.down = { x: e.clientX, y: e.clientY, t: performance.now() };
-    this.engage(e);
+    if (e.pointerType === 'mouse') {
+      this.engage(e.clientX, e.clientY);
+      return;
+    }
+    if (!this.engaged) {
+      // pick the ball up where it is (after the game: where the view is)
+      const R = this.canvas.getBoundingClientRect();
+      const playing = this.enabled && this.bvx !== null;
+      this.mx = playing ? this.bvx : R.left + this.w / 2 + this.fracOf(this.ball) * this.usable;
+      this.my = playing ? this.bvy : R.top + this.h * 0.45;
+    }
+    this.down.mx = this.mx;
+    this.down.my = this.my;
+    this.engage(this.mx, this.my);
   }
 
   onMove(e) {
-    if (this.mode === 'drop') return;
+    if (this.mode === 'drop' || !e.isPrimary) return;
     if (!this.enabled && this.focus === null) return;
-    // mouse steers by hovering; touch and pen steer while pressed
-    if (e.pointerType === 'mouse' || this.down) this.engage(e);
+    if (e.pointerType === 'mouse') {
+      this.engage(e.clientX, e.clientY);
+      return;
+    }
+    const d = this.down;
+    if (!d) return;
+    // the ball moves as far as the finger does, kept on screen and no lower
+    // than the floor it presses into (so it answers at once on the way back)
+    const R = this.canvas.getBoundingClientRect();
+    const x = clamp(d.mx + e.clientX - d.x, R.left, R.right);
+    const y = clamp(d.my + e.clientY - d.y, R.top + BALL_R, this.floorY + BEND);
+    this.engage(x, y);
   }
 
   onUp(e) {
     const d = this.down;
     this.down = null;
-    if (!d || this.mode === 'drop') return;
+    if (!d || this.mode === 'drop' || !e.isPrimary) return;
+    const touch = e.pointerType !== 'mouse';
     if (!this.enabled) {
-      if (e.pointerType !== 'mouse') this.disengage(); // lifted: back to the answer
+      if (touch) this.disengage(); // lifted: the view goes back to the answer
       return;
     }
     const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
     const isTap = moved <= TAP_SLOP && performance.now() - d.t <= TAP_TIME;
-    if (isTap) {
-      // mouse: drop where the ball (and readout) is; touch: where the tap was
-      const rect = this.canvas.getBoundingClientRect();
-      if (e.pointerType !== 'mouse') this.bvx = e.clientX;
-      this.drop(e.pointerType === 'mouse' ? this.ball : this.valueAt(e.clientX - rect.left));
-    } else if (e.pointerType !== 'mouse') {
-      this.disengage(); // finger lifted after aiming: the ball stays floating there
-    }
+    // a click or tap anywhere drops the ball on the spot under it; after a
+    // drag, a lifted finger leaves the ball (and the readout) where it is
+    if (isTap) this.drop(this.ball);
   }
 
   // ---- drawing -----------------------------------------------------------

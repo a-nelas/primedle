@@ -1,6 +1,6 @@
 # Primedle
 
-A daily number game. Every day there's a new number between 100 and 9,999. Move the ball anywhere on screen to aim (it can't go below the wave, which rises to meet it) and click (or tap) to drop it on the prime closest to that number. The line stretches out as you move farther from the number.
+A daily number game. Every day there's a new number between 100 and 9,999. Move the ball anywhere on screen to aim (it can't go below the wave, which rises to meet it) and click to drop it on the prime closest to that number. On a phone, drag anywhere to move the ball and tap anywhere to drop it. The line stretches out as you move farther from the number.
 
 Every prime in this range ends in 1, 3, 7 or 9, so those are the only numbers on the line: the daily number sits in the middle, with one spot for each 1, 3, 7 or 9 number around it (for 2891: … 2887, 2889, **2891**, 2893, 2897 …). The ball reaches 40 spots either side (about 100 numbers), and the closest prime is never more than 7 spots away.
 
