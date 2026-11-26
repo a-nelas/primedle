@@ -108,18 +108,27 @@ body::after {
   place-items: center;
   padding-bottom: 12vh;
   font-family: "Press Start 2P", VT323, ui-monospace, Consolas, monospace;
-  font-size: min(17vw, 24vh);
+  font-size: min(17vw, 25vh);
   line-height: 1;
-  letter-spacing: -0.02em;
-  color: rgb(233 232 238 / 0.05);
-  text-shadow: -3px 0 rgb(255 50 140 / 0.05), 3px 0 rgb(60 220 255 / 0.05);
+  letter-spacing: 0.02em;
+  /* drawn solid, then faded as a whole, so the thickening below doesn't
+     stack up into darker patches */
+  color: #e9e8ee;
+  opacity: 0.055;
+  --t: 0.062em; /* how much each pixel stroke is fattened */
+  text-shadow:
+    /* square dilation: offset copies all round keep the pixel corners sharp */
+    var(--t) 0, calc(-1 * var(--t)) 0, 0 var(--t), 0 calc(-1 * var(--t)),
+    var(--t) var(--t), calc(-1 * var(--t)) var(--t), var(--t) calc(-1 * var(--t)), calc(-1 * var(--t)) calc(-1 * var(--t)),
+    /* a CRT fringe outside the fattened shape */
+    calc(-2 * var(--t)) 0 rgb(255 50 140), calc(2 * var(--t)) 0 rgb(60 220 255);
   pointer-events: none;
   user-select: none;
-  transition: color 0.6s;
+  transition: opacity 0.6s;
 }
-.score.final { color: rgb(233 232 238 / 0.09); }
-/* chunky 8-bit digits, a touch wider still */
-.score span { display: inline-block; transform: scaleX(1.12); }
+.score.final { opacity: 0.095; }
+/* chunky 8-bit digits, wider and a little squat */
+.score span { display: inline-block; transform: scale(1.18, 1.05); }
 
 #bar {
   position: absolute;
