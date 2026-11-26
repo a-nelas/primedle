@@ -130,7 +130,8 @@ function showScore(score, over) {
   // count up to the new score
   const t0 = performance.now();
   const tick = (t) => {
-    const p = Math.min(1, (t - t0) / 600);
+    // a frame's timestamp can come from just before t0: never count below `from`
+    const p = Math.min(1, Math.max(0, (t - t0) / 600));
     el.innerHTML = `<span>${Math.round(from + (score - from) * p)}%</span>`;
     if (p < 1) scoreAnim = requestAnimationFrame(tick);
   };
