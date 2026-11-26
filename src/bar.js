@@ -51,6 +51,8 @@ const TAP_SLOP = 8; // px a tap may move and still count as a click
 const TAP_TIME = 450; // ms
 
 const CRT_FONT = 'VT323';
+const INFO_SIZE = 20; // px: the facts under the numbers after the game
+const INFO_LINE = 19; // px between their lines
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 const follow = (rate, dt) => 1 - Math.exp(-rate * dt);
 const easeOut = (t) => 1 - (1 - t) ** 3;
@@ -123,6 +125,10 @@ export class NumberBar {
     this.answers = []; // shown once the game is over
     this.focus = null; // game over: where the camera rests (units)
     this.reveal = 0; // 0 → 1 as the answer appears
+    this.info = []; // after the game: { value, lines, tone } facts under the numbers
+    this.infoSprites = [];
+    this.infoH = 0; // px the scene slides up to make room for them
+    this.rise = 0; // 0 → 1 as it does
     this.nodes = new Map(); // unit -> { h, v }
     this.sparks = [];
     this.spawnAcc = 0;
@@ -148,8 +154,12 @@ export class NumberBar {
     this.resize();
   }
 
-  set({ markers, enabled, answers }) {
+  set({ markers, enabled, answers, info }) {
     if (markers) this.markers = markers;
+    if (info) {
+      this.info = info;
+      this.buildInfo();
+    }
     if (enabled !== undefined) this.enabled = enabled;
     if (answers) {
       this.answers = answers;
@@ -162,7 +172,8 @@ export class NumberBar {
       this.focus = offs.length ? offs.reduce((a, b) => a + b, 0) / offs.length : 0;
       this.engaged = false;
       const half = this.restHalf + BETA * Math.abs(this.focus);
-      this.animate({ ball: this.focus, cam: this.focus, half, lift: 0, reveal: 1 }, 1.1, easeInOut);
+      // and the scene slides up, making room for the facts under the numbers
+      this.animate({ ball: this.focus, cam: this.focus, half, lift: 0, reveal: 1, rise: 1 }, 1.1, easeInOut);
     }
     // while playing, the ball is the cursor
     document.documentElement.classList.toggle('playing', this.enabled);
@@ -231,17 +242,31 @@ export class NumberBar {
     if (this.answers.length) {
       this.answerLabels = this.answers.map((a) => this.makeLabel(String(a), '#7dffa8', 'rgba(61, 255, 154, 0.7)'));
     }
+    if (this.info.length) this.buildInfo();
     this.kick();
   }
 
+  /** The facts' sprites: a small, dimmer CRT line each. */
+  buildInfo() {
+    this.infoSprites = this.info.map(({ value, lines, tone }) => {
+      const answer = tone === 'answer';
+      const core = answer ? 'rgba(125, 255, 168, 0.8)' : 'rgba(233, 232, 238, 0.75)';
+      const glow = answer ? 'rgba(61, 255, 154, 0.45)' : 'rgba(255, 255, 255, 0.35)';
+      const sprites = lines.map((t) => this.makeLabel(t, core, glow, INFO_SIZE));
+      return { value, sprites, w: Math.max(0, ...sprites.map((x) => x.w)) };
+    });
+    const rows = Math.max(0, ...this.info.map((b) => b.lines.length));
+    this.infoH = rows ? rows * INFO_LINE + 6 : 0;
+  }
+
   /** A CRT-style number label: RGB fringe, glow. */
-  makeLabel(text, core, glow) {
+  makeLabel(text, core, glow, size = 26) {
     const dpr = this.dpr || 1;
-    const font = `26px ${CRT_FONT}, ui-monospace, Consolas, monospace`;
+    const font = `${size}px ${CRT_FONT}, ui-monospace, Consolas, monospace`;
     const meas = document.createElement('canvas').getContext('2d');
     meas.font = font;
     const tw = Math.ceil(meas.measureText(text).width) + 24;
-    const th = 34;
+    const th = Math.round(size * 1.3);
     const l = document.createElement('canvas');
     l.width = Math.ceil(tw * dpr);
     l.height = Math.ceil(th * dpr);
@@ -255,7 +280,7 @@ export class NumberBar {
     lg.fillStyle = 'rgba(60, 220, 255, 0.65)';
     lg.fillText(text, tw / 2 + 1.5, th / 2);
     lg.shadowColor = glow;
-    lg.shadowBlur = 8;
+    lg.shadowBlur = size < 26 ? 5 : 8;
     lg.fillStyle = core;
     lg.fillText(text, tw / 2, th / 2);
     return { canvas: l, w: tw, h: th };
@@ -270,7 +295,8 @@ export class NumberBar {
     return this.usable / this.half;
   }
   get baseline() {
-    return this.h - 48; // room below for N's label
+    // room below for N's label, and after the game for the facts under it
+    return this.h - 48 - this.rise * this.infoH;
   }
   /** Tallest the wave rises: it keeps to the lower part of the screen. */
   get maxH() {
@@ -940,6 +966,9 @@ export class NumberBar {
     const nOn = xN >= PAD - 6 && xN <= w - PAD + 6;
     const nLeft = L ? (nOn ? xN - L.w / 2 : xN < w / 2 ? 16 : w - 16 - L.w) : 0;
 
+    const placed = []; // where each label landed: { value, cx, side }
+    if (L) placed.push({ value: this.center, cx: nLeft + L.w / 2, side: 0 });
+
     // after the game: the closest prime(s), in green
     if (this.reveal > 0.01) {
       this.answers.forEach((a, i) => {
@@ -976,6 +1005,7 @@ export class NumberBar {
           }
           ax = clamp(ax, 4, w - 4 - A.w);
           ctx.drawImage(A.canvas, ax, base + 6, A.w, A.h);
+          placed.push({ value: a, cx: ax + A.w / 2, side: Math.sign(u) });
         }
         ctx.restore();
       });
@@ -986,6 +1016,7 @@ export class NumberBar {
       if (!nOn) this.edgeArrow(xN < w / 2 ? 'left' : 'right', base - 20, '#ffffff');
       ctx.drawImage(L.canvas, nLeft, base + 6, L.w, L.h);
     }
+    if (this.reveal > 0.01 && this.infoSprites.length) this.drawInfo(placed, base + 36);
 
     // sparkles: small CRT polygons with an RGB fringe, pixel-snapped
     // positions and stepped flicker (scanlines come from the page overlay)
@@ -1009,6 +1040,39 @@ export class NumberBar {
       }
       g.restore();
     }
+  }
+
+  /**
+   * The facts, a small block under each number's label. N's block is centred
+   * under its label; an answer's steps away from it if the two would overlap
+   * (and if the screen edge stops it, N's moves over instead).
+   */
+  drawInfo(placed, top) {
+    const { ctx, w } = this;
+    const at = (v) => placed.find((p) => p.value === v);
+    const blocks = [];
+    const nb = this.infoSprites.find((b) => b.value === this.center);
+    const n = nb && at(this.center);
+    let nl = n ? clamp(n.cx - nb.w / 2, 4, w - 4 - nb.w) : 0;
+    for (const b of this.infoSprites) {
+      if (b === nb) continue;
+      const p = at(b.value);
+      if (!p) continue; // that answer is off screen
+      let l = clamp(p.cx - b.w / 2, 4, w - 4 - b.w);
+      if (n && l < nl + nb.w + 6 && l + b.w > nl - 6) {
+        l = clamp(p.side > 0 ? nl + nb.w + 8 : nl - 8 - b.w, 4, w - 4 - b.w);
+        // pinned against the edge: move N's block out of the way instead
+        if (l < nl + nb.w + 6 && l + b.w > nl - 6) nl = clamp(p.side > 0 ? l - 8 - nb.w : l + b.w + 8, 4, w - 4 - nb.w);
+      }
+      blocks.push([b, l]);
+    }
+    if (n) blocks.push([nb, nl]);
+    ctx.save();
+    ctx.globalAlpha = Math.round(this.reveal * 4) / 4; // stepped, like the labels
+    for (const [b, l] of blocks) {
+      b.sprites.forEach((sp, i) => ctx.drawImage(sp.canvas, l + (b.w - sp.w) / 2, top + i * INFO_LINE, sp.w, sp.h));
+    }
+    ctx.restore();
   }
 
   /** The ball, its aim line and the wall flash, on the full-screen overlay. */

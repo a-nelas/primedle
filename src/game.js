@@ -4,6 +4,7 @@ import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 import { cleanState } from './state.js';
 import { numberAt, spotOf, spotDistance } from './slots.js';
+import { primeFacts, numberFacts } from './facts.js';
 import * as sfx from './sound.js';
 import * as music from './music.js';
 
@@ -112,6 +113,10 @@ function render() {
     markers: g.map((x) => ({ value: x.value, color: hintColor(x.d) })),
     enabled: !over,
     answers: over ? targets : undefined, // revealed once the game is over
+    // and a couple of facts under the answer and the daily number
+    info: over
+      ? [...targets.map((p) => ({ value: p, lines: primeFacts(p), tone: 'answer' })), { value: N, lines: numberFacts(N), tone: 'n' }]
+      : undefined,
   });
   showScore(scoreFor(g), over);
   $('tries').innerHTML = Array.from({ length: MAX_TRIES }, (_, i) => {

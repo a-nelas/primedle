@@ -6,7 +6,7 @@ Every prime in this range ends in 1, 3, 7 or 9, so those are the only numbers on
 
 You get 3 tries. The only hints are your drops, each colored from red (5 or more spots away) through yellow to green (spot on).
 
-Your score is how close your best drop got to the prime: 100% on it, then 80, 60, 40, 20 and 0% from 5 spots away. It doesn't matter which try it was. After the game the answer is revealed and you can look around the number line.
+Your score is how close your best drop got to the prime: 100% on it, then 80, 60, 40, 20 and 0% from 5 spots away. It doesn't matter which try it was. After the game the answer is revealed, with a couple of facts under it and under the daily number (which prime it is, the number's factors…), and you can look around the number line.
 
 Your progress is saved in your browser for the day, so a refresh doesn't give you new tries (a private window or clearing site data does start over: there's no server).
 

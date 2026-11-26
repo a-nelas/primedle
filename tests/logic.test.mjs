@@ -159,3 +159,21 @@ test('saved game: a finished game comes back finished', () => {
   assert.equal(lost.status, 'lost');
   assert.equal(lost.guesses.length, 3);
 });
+
+test('facts: the answer and the daily number', async () => {
+  const { primeFacts, numberFacts, factorize } = await import('../src/facts.js');
+  assert.deepEqual(primeFacts(2887), ['418th prime', 'next prime: 2897']);
+  assert.deepEqual(numberFacts(2891), ['7² × 59', '6 divisors']);
+  assert.equal(primeFacts(8191)[1], '2¹³ − 1, Mersenne');
+  assert.equal(primeFacts(1009)[1], 'smallest 4-digit prime');
+  assert.equal(primeFacts(7919)[0], '1000th prime');
+  assert.equal(numberFacts(1729)[1], '1³+12³ = 9³+10³');
+  assert.equal(numberFacts(6174)[1], "Kaprekar's constant");
+  assert.equal(numberFacts(1296)[1], '= 6⁴');
+  for (let n = MIN; n <= MAX; n++) {
+    const lines = isPrime(n) ? primeFacts(n) : numberFacts(n);
+    assert.ok(lines.length >= 1 && lines.length <= 2, `${n}`);
+    for (const l of lines) assert.ok(l.length <= 24, `${n}: ${l}`);
+    if (!isPrime(n)) assert.equal(factorize(n).reduce((m, [q, e]) => m * q ** e, 1), n);
+  }
+});
