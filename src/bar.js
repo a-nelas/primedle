@@ -19,6 +19,8 @@ const K = 0.5;
 const BETA = 0.42;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
+const FAST_K = 1100; // the same, much quicker, while the ball falls onto it
+const FAST_D = 2 * Math.sqrt(FAST_K) * 0.95;
 const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
 const MAX_SPARKS = 60;
 const SPARK_DENSITY = 25; // px of wave per twinkling sparkle (20 to 50 at once)
@@ -421,7 +423,8 @@ export class NumberBar {
         b.v = 0;
         continue;
       }
-      const a = STIFF * (target - b.h) - DAMP * b.v;
+      // while the ball falls, the wave answers fast enough to rise with it
+      const a = this.mode === 'drop' ? FAST_K * (target - b.h) - FAST_D * b.v : STIFF * (target - b.h) - DAMP * b.v;
       b.v += a * dt;
       b.h = Math.max(2, b.h + b.v * dt);
       if (Math.abs(b.v) > 0.3 || Math.abs(target - b.h) > 0.2) busy = true;
@@ -609,7 +612,8 @@ export class NumberBar {
     const linear = (t) => t;
     this.animate({ ball: v, slide: 1 }, 0.07, linear, () =>
       this.animate({}, 0.05, linear, () => {
-        this.frozen = true; // the wave stays up, exactly as it is
+        // the wave keeps rising to meet the ball as it falls (it freezes
+        // on impact)
         sfx.fall(0.12);
         this.animate({ fall: 1 }, 0.12, easeIn, () => this.impact(v));
       }),
@@ -617,6 +621,7 @@ export class NumberBar {
   }
 
   impact(v) {
+    this.frozen = true; // the wave stays up, exactly as it is
     sfx.crash();
     // score it first: an accepted drop comes back with its hint colour
     const res = this.onDrop(this.center + v);
