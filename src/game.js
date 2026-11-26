@@ -4,7 +4,7 @@ import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
 import { cleanState } from './state.js';
 import * as sfx from './sound.js';
-import './music.js'; // the background song
+import * as music from './music.js';
 
 // Game-only build: just the number bar, the readout and the try dots.
 // The title, help, hint text, results, sharing and stats dialogs were removed
@@ -139,6 +139,22 @@ function showScore(score, over) {
   };
   scoreAnim = requestAnimationFrame(tick);
 }
+
+// ---- music on/off: the speaker button, top right ---------------------------
+
+const musicBtn = $('music');
+function showMusic() {
+  musicBtn.classList.toggle('muted', !music.isOn());
+  musicBtn.setAttribute('aria-pressed', String(music.isOn()));
+}
+// keep the press away from the game (a click here is not a drop)
+for (const t of ['pointerdown', 'pointerup']) musicBtn.addEventListener(t, (e) => e.stopPropagation());
+musicBtn.addEventListener('click', () => {
+  sfx.unlock();
+  music.setOn(!music.isOn());
+  showMusic();
+});
+showMusic();
 
 // another tab played: pick up its progress, so tries can't be doubled up
 window.addEventListener('storage', (e) => {

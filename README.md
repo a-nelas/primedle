@@ -8,7 +8,7 @@ Your score is how close your best drop got to the prime: 100% on it, dropping ev
 
 Your progress is saved in your browser for the day, so a refresh doesn't give you new tries (a private window or clearing site data does start over: there's no server).
 
-A small 8-bit song plays softly in the background, and every sound is synthesized in the browser.
+A hype 8-bit EDM track (128 bpm) plays in the background; turn it off with the speaker button at the top right. Every sound is synthesized in the browser.
 
 Play at **https://a-nelas.github.io/primedle/**
 
