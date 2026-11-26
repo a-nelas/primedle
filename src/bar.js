@@ -29,7 +29,16 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
-const BAR_DIP = 32; // px: the most the wave drops beside a scoring bar
+// The wave's profile: a small rounded top, then concave sides that fall
+// steeply and spread into a long, gentle skirt (rather than a round bell).
+// x is the distance in widths; c sets how round the top is.
+const profile = (x, c) => Math.exp(c - Math.sqrt(c * c + x * x));
+const WAVE_TOP = 0.6; // roundness of the free wave's top
+const BAR_TOP = 0.15; // beside a scoring bar: bends over its edge quickly
+// the wave morphs into the bar's shape and back on a loose spring, so it
+// overshoots and wobbles between the two
+const MORPH_K = 320;
+const MORPH_D = 2 * Math.sqrt(MORPH_K) * 0.28;
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
@@ -82,7 +91,9 @@ export class NumberBar {
     this.sink = 0; // drop: 0 → 1 as the ball falls on through the wave and off screen
     this.appear = 1; // the ball re-materialising for the next try, 0 → 1
     this.hit = null; // { u, color, t }: the bar a scored drop punches into the wave
-    this.plateau = null; // the flat top that bar presses into the wave
+    this.plateau = null; // the bar's shape pressed into the wave
+    this.barGeom = null; // where that bar is (kept while the wave settles)
+    this.morph = { a: 0, v: 0 }; // 0 = free wave, 1 = shaped by the bar
     this.tinted = new Map(); // colour -> ball sprite tinted that colour
     this.from = null; // where a drop started (viewport px)
     this.bvx = null; // ball position in viewport px
@@ -286,21 +297,14 @@ export class NumberBar {
   surfaceY(u) {
     let h = Math.max(3, this.springH(u));
     // a scoring bar shapes the wave around it: flat across the bar's top,
-    // then falling smoothly away right from its edges (a gaussian shoulder,
-    // level where it meets the bar, so there's no corner). It falls at most
-    // BAR_DIP, onto the wave lowered by that much (never below its rest), so
-    // a tall, fat wave keeps its shape instead of being cut to a thin tower.
+    // then bending over its edges and down the same concave sides as the
+    // wave itself (level where it meets the bar, so there's no corner)
     const P = this.plateau;
     if (P) {
       const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
-      let shape = P.h;
-      if (dx > 0) {
-        const low = h - BAR_DIP;
-        const k = 8; // smooth maximum with the rest level
-        const under = (low + P.rest + Math.sqrt((low - P.rest) ** 2 + k * k)) / 2;
-        shape = under + (P.h - under) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
-      }
-      h += (shape - h) * P.amt;
+      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * profile(dx / P.lam, BAR_TOP);
+      // the spring's overshoot bulges the sides out, but never above the bar
+      h = Math.min(h + (shape - h) * P.amt, Math.max(P.h, h));
     }
     return this.baseline - h;
   }
@@ -401,7 +405,7 @@ export class NumberBar {
     for (let n = lo; n <= hi; n++) {
       const rest = this.restFor(n);
       const d = n - this.ball;
-      const bell = (peak - rest) * this.lift * this.prox * Math.exp(-(d * d) / (2 * sigma * sigma));
+      const bell = (peak - rest) * this.lift * this.prox * profile(d / sigma, WAVE_TOP);
       const target = Math.max(2, rest + bell);
       let b = this.nodes.get(n);
       if (!b) {
@@ -486,22 +490,41 @@ export class NumberBar {
       this.flash = Math.max(0, this.flash - dt / 0.4);
       busy = true;
     }
-    this.plateau = null;
     if (this.hit) {
       this.hit.t += dt;
       busy = true;
       if (this.hit.t > HIT_END) this.hit = null;
     }
+    // the wave takes the bar's shape on impact and lets go as the bar
+    // narrows, on a loose spring: it overshoots and wobbles into each
+    let want = 0;
     if (this.hit) {
-      const { grow, width, shrink } = this.hitShape();
-      this.plateau = {
+      const { width, shrink } = this.hitShape();
+      want = 1 - shrink;
+      this.barGeom = {
         x: this.xOf(this.hit.u),
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
         rest: this.restFor(0),
-        fall: 8, // px: how quickly the wave drops away beside the bar (a sharp fall)
-        amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
+        lam: this.sigma * this.ppu, // the wave's own width, in px
       };
+    }
+    const M = this.morph;
+    if (REDUCED) {
+      M.a = want;
+      M.v = 0;
+    } else {
+      M.v += (MORPH_K * (want - M.a) - MORPH_D * M.v) * dt;
+      M.a += M.v * dt;
+    }
+    if (this.barGeom && (this.hit || Math.abs(M.a) > 0.002 || Math.abs(M.v) > 0.02)) {
+      this.plateau = { ...this.barGeom, amt: M.a };
+      busy = true;
+    } else {
+      this.plateau = null;
+      this.barGeom = null;
+      M.a = 0;
+      M.v = 0;
     }
 
     // the wave reaches up toward the ball: tall when it's near, low when far
