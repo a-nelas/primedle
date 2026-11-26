@@ -29,6 +29,7 @@ const SHAPES = [
   [[0, -2], [0.4, -0.4], [2, 0], [0.4, 0.4], [0, 2], [-0.4, 0.4], [-2, 0], [-0.4, -0.4]], // 4-point star
   Array.from({ length: 6 }, (_, i) => [Math.cos((i * Math.PI) / 3), Math.sin((i * Math.PI) / 3)]), // hexagon
 ];
+const BAR_DIP = 32; // px: the most the wave drops beside a scoring bar
 const HIT_HOLD = 0.35; // s the impact bar stays wide
 const HIT_END = 0.95; // s by which it has narrowed into the drop's marker
 const TAP_SLOP = 8; // px a tap may move and still count as a click
@@ -286,11 +287,19 @@ export class NumberBar {
     let h = Math.max(3, this.springH(u));
     // a scoring bar shapes the wave around it: flat across the bar's top,
     // then falling smoothly away right from its edges (a gaussian shoulder,
-    // level where it meets the bar, so there's no corner)
+    // level where it meets the bar, so there's no corner). It falls at most
+    // BAR_DIP, onto the wave lowered by that much (never below its rest), so
+    // a tall, fat wave keeps its shape instead of being cut to a thin tower.
     const P = this.plateau;
     if (P) {
       const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
-      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
+      let shape = P.h;
+      if (dx > 0) {
+        const low = h - BAR_DIP;
+        const k = 8; // smooth maximum with the rest level
+        const under = (low + P.rest + Math.sqrt((low - P.rest) ** 2 + k * k)) / 2;
+        shape = under + (P.h - under) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
+      }
       h += (shape - h) * P.amt;
     }
     return this.baseline - h;

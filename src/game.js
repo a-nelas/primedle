@@ -69,7 +69,10 @@ function showReadout(v) {
 
 function handleDrop(v) {
   if (state.status !== 'playing') return false;
-  if (v === N || state.guesses.some((g) => g.value === v)) return false;
+  if (v === N) return false;
+  // the same number again: show its bar once more, but it costs no try
+  const again = state.guesses.find((g) => g.value === v);
+  if (again) return hintColor(again.d);
   const d = Math.min(...targets.map((t) => Math.abs(v - t)));
   state.guesses.push({ value: v, d });
   if (d === 0) finish(true);
