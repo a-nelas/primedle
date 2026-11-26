@@ -290,16 +290,14 @@ export class NumberBar {
   }
   surfaceY(u) {
     let h = Math.max(3, this.springH(u));
-    // a scoring bar flattens the wave into its top: flat across the bar,
-    // easing smoothly back into the wave on either side (no corners)
+    // a scoring bar shapes the wave around it: flat across the bar's top,
+    // then falling smoothly away right from its edges (a gaussian shoulder,
+    // level where it meets the bar, so there's no corner)
     const P = this.plateau;
     if (P) {
-      const dx = Math.abs(this.xOf(u) - P.x);
-      let k = dx <= P.hw ? 1 : 1 - (dx - P.hw) / P.blend;
-      if (k > 0) {
-        k = k * k * (3 - 2 * k);
-        h += (P.h - h) * k * P.amt;
-      }
+      const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
+      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
+      h += (shape - h) * P.amt;
     }
     return this.baseline - h;
   }
@@ -493,13 +491,14 @@ export class NumberBar {
       if (this.hit.t > HIT_END) this.hit = null;
     }
     if (this.hit) {
-      const { width, shrink } = this.hitShape();
+      const { grow, width, shrink } = this.hitShape();
       this.plateau = {
         x: this.xOf(this.hit.u),
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
-        blend: Math.max(18, width * 0.9),
-        amt: 1 - shrink,
+        rest: this.restFor(0),
+        fall: 18, // px: how quickly the wave drops away beside the bar
+        amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
       };
     }
 
