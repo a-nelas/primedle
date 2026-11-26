@@ -139,25 +139,14 @@ function showScore(score, over) {
   scoreAnim = requestAnimationFrame(tick);
 }
 
-// ---- music on/off (button, or the M key) ----------------------------------
+// ---- music: on by default, M turns it off or on again --------------------
 
-const musicBtn = $('music');
-function showMusic() {
-  musicBtn.classList.toggle('muted', !music.isOn());
-  musicBtn.setAttribute('aria-pressed', String(music.isOn()));
-}
-function toggleMusic() {
-  sfx.unlock();
-  music.setOn(!music.isOn());
-  showMusic();
-}
-// keep the press away from the game (a click here is not a drop)
-for (const t of ['pointerdown', 'pointerup']) musicBtn.addEventListener(t, (e) => e.stopPropagation());
-musicBtn.addEventListener('click', toggleMusic);
 window.addEventListener('keydown', (e) => {
-  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) toggleMusic();
+  if ((e.key === 'm' || e.key === 'M') && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
+    sfx.unlock();
+    music.setOn(!music.isOn());
+  }
 });
-showMusic();
 
 // a new number at local midnight
 setInterval(() => {

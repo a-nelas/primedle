@@ -291,12 +291,10 @@ export class NumberBar {
   surfaceY(u) {
     let h = Math.max(3, this.springH(u));
     // a scoring bar shapes the wave around it: flat across the bar's top,
-    // then falling smoothly away right from its edges (a gaussian shoulder,
-    // level where it meets the bar, so there's no corner)
+    // then a sheer drop at its edges, straight down to the wave's rest
     const P = this.plateau;
     if (P) {
-      const dx = Math.abs(this.xOf(u) - P.x) - P.hw;
-      const shape = dx <= 0 ? P.h : P.rest + (P.h - P.rest) * Math.exp(-(dx * dx) / (2 * P.fall * P.fall));
+      const shape = Math.abs(this.xOf(u) - P.x) <= P.hw ? P.h : P.rest;
       h += (shape - h) * P.amt;
     }
     return this.baseline - h;
@@ -497,7 +495,6 @@ export class NumberBar {
         hw: width / 2,
         h: Math.max(3, this.springH(this.hit.u)),
         rest: this.restFor(0),
-        fall: 8, // px: how quickly the wave drops away beside the bar (a sharp fall)
         amt: grow * (1 - shrink), // morphs in on impact, lets go as the bar narrows
       };
     }
@@ -741,8 +738,16 @@ export class NumberBar {
     }
 
     // the wave
-    const pts = [];
-    for (let x = 0; x <= w + 3; x += 3) pts.push([x, this.surfaceY(this.uOf(x))]);
+    const xs = [];
+    for (let x = 0; x <= w + 3; x += 3) xs.push(x);
+    const P = this.plateau;
+    if (P) {
+      // sample right at the bar's edges, on both sides, so they drop sheer
+      const e = 0.01;
+      xs.push(P.x - P.hw - e, P.x - P.hw + e, P.x + P.hw - e, P.x + P.hw + e);
+      xs.sort((a, b) => a - b);
+    }
+    const pts = xs.map((x) => [x, this.surfaceY(this.uOf(x))]);
 
     ctx.beginPath();
     ctx.moveTo(0, base);
@@ -1143,7 +1148,12 @@ export class NumberBar {
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(x0, base);
-    for (let xx = x0; xx <= x1; xx++) {
+    const xs = [];
+    for (let xx = x0; xx <= x1; xx++) xs.push(xx);
+    const P = this.plateau;
+    if (P) xs.push(P.x - P.hw - 0.01, P.x - P.hw + 0.01, P.x + P.hw - 0.01, P.x + P.hw + 0.01);
+    xs.sort((a, b) => a - b);
+    for (const xx of xs) {
       const sy = this.surfaceY(this.uOf(xx));
       top = Math.min(top, sy);
       ctx.lineTo(xx, sy);
