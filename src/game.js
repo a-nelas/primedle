@@ -2,6 +2,7 @@ import { closestPrimes } from './primes.js';
 import { todayKey, yesterdayKey, dailyNumber } from './daily.js';
 import { MAX_TRIES, REACH, hintColor, scoreFor } from './hints.js';
 import { NumberBar } from './bar.js';
+import { cleanState } from './state.js';
 import * as sfx from './sound.js';
 import './music.js'; // the background song
 
@@ -12,9 +13,9 @@ import './music.js'; // the background song
 const STATE_KEY = 'primedle:state';
 const STATS_KEY = 'primedle:stats';
 
-// Testing: nothing is saved or loaded, so a reload starts today's game over.
-// Set back to true for launch.
-const SAVE = false;
+// Today's progress is saved in this browser, so a reload carries on (or shows
+// the finished game) instead of giving a fresh set of tries.
+const SAVE = true;
 
 const store = {
   get(k, fallback) {
@@ -44,10 +45,7 @@ const key = todayKey();
 const N = dailyNumber(key);
 const targets = closestPrimes(N);
 
-let state = store.get(STATE_KEY, null);
-if (!state || state.key !== key || !Array.isArray(state.guesses)) {
-  state = { key, guesses: [], status: 'playing' };
-}
+const state = cleanState(store.get(STATE_KEY, null), { key, N, targets, reach: REACH, maxTries: MAX_TRIES });
 
 const defaultStats = { played: 0, wins: 0, streak: 0, maxStreak: 0, dist: [0, 0, 0], lastWinKey: null };
 const stats = { ...defaultStats, ...store.get(STATS_KEY, {}) };
@@ -142,9 +140,14 @@ function showScore(score, over) {
   scoreAnim = requestAnimationFrame(tick);
 }
 
-// a new number at local midnight
+// another tab played: pick up its progress, so tries can't be doubled up
+window.addEventListener('storage', (e) => {
+  if (SAVE && e.key === STATE_KEY && e.newValue !== JSON.stringify(state)) location.reload();
+});
+
+// a new number at local midnight, but a game in progress gets finished first
 setInterval(() => {
-  if (todayKey() !== key) location.reload();
+  if (todayKey() !== key && (state.status !== 'playing' || state.guesses.length === 0)) location.reload();
 }, 30000);
 
 render();

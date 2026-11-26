@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { isPrime, closestPrimes } from '../src/primes.js';
 import { dailyNumber, puzzleNumber, todayKey, yesterdayKey, MIN, MAX } from '../src/daily.js';
 import { levelFor, trend, shareText, hintColor, scoreFor, REACH } from '../src/hints.js';
+import { cleanState } from '../src/state.js';
 
 test('isPrime', () => {
   const primes = [2, 3, 5, 7, 11, 13, 97, 101, 7919, 9973];
@@ -104,4 +105,35 @@ test('every answer is well within reach of the ball', () => {
   }
   assert.equal(max, 18);
   assert.ok(REACH >= max + 4);
+});
+
+// a day with N = 2891 (= 7·7·59), whose closest prime is 2887, 4 below
+const DAY = { key: '2026-11-26', N: 2891, targets: [2887], reach: REACH, maxTries: 3 };
+
+test('saved game: another day or nothing saved starts fresh', () => {
+  const fresh = { key: DAY.key, guesses: [], status: 'playing' };
+  assert.deepEqual(cleanState(null, DAY), fresh);
+  assert.deepEqual(cleanState('junk', DAY), fresh);
+  assert.deepEqual(cleanState({ key: '2026-11-25', guesses: [{ value: 2890 }], status: 'playing' }, DAY), fresh);
+});
+
+test('saved game: guesses kept, distances and status recomputed', () => {
+  const s = cleanState({ key: DAY.key, guesses: [{ value: 2895, d: 0 }], status: 'won' }, DAY);
+  assert.deepEqual(s.guesses, [{ value: 2895, d: 8 }]); // a tampered d doesn't count
+  assert.equal(s.status, 'playing');
+});
+
+test('saved game: junk guesses are dropped', () => {
+  const guesses = [{ value: 2891 }, { value: 2880.5 }, { value: 2891 + REACH + 1 }, { value: 'x' }, null, { value: 2889 }, { value: 2889 }];
+  const s = cleanState({ key: DAY.key, guesses }, DAY);
+  assert.deepEqual(s.guesses, [{ value: 2889, d: 2 }]);
+});
+
+test('saved game: a finished game comes back finished', () => {
+  const won = cleanState({ key: DAY.key, guesses: [{ value: 2895 }, { value: 2887 }, { value: 2893 }] }, DAY);
+  assert.equal(won.status, 'won');
+  assert.equal(won.guesses.length, 2); // nothing counts after the win
+  const lost = cleanState({ key: DAY.key, guesses: [{ value: 2880 }, { value: 2885 }, { value: 2893 }, { value: 2894 }] }, DAY);
+  assert.equal(lost.status, 'lost');
+  assert.equal(lost.guesses.length, 3);
 });

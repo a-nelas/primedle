@@ -2,9 +2,11 @@
 
 A daily number game. Every day there's a new number between 100 and 9,999. Move the ball anywhere on screen to aim (it can't go below the wave, which rises to meet it) and click (or tap) to drop it on the prime closest to that number. The line stretches out as you move farther from the number.
 
-You get 3 tries. The only hints are your drops, each colored from red (12 or more away) through yellow to green (spot on). The closest prime is never more than 18 away, and the ball reaches 24 either side.
+You get 3 tries. The only hints are your drops, each colored from red (12 or more away) through yellow to green (spot on). The closest prime is never more than 18 away, and the ball reaches 40 either side.
 
 Your score is how close your best drop got to the prime: 100% on it, dropping evenly to 0% at 12 or more away. It doesn't matter which try it was. After the game the answer is revealed and you can look around the number line.
+
+Your progress is saved in your browser for the day, so a refresh doesn't give you new tries (a private window or clearing site data does start over: there's no server).
 
 A small 8-bit song plays softly in the background, and every sound is synthesized in the browser.
 

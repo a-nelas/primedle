@@ -3,10 +3,10 @@ export const SITE_URL = 'https://a-nelas.github.io/primedle/';
 
 /**
  * How far the ball reaches either side of the daily number. The closest prime
- * is never more than 18 away (at 9569, between 9551 and 9587); the margin
- * keeps the screen edge from hinting at the answer.
+ * is never more than 18 away (at 9569, between 9551 and 9587); the wide margin
+ * keeps the screen edge from hinting at the answer and adds plenty of decoys.
  */
-export const REACH = 24;
+export const REACH = 40;
 
 export const LEVELS = [
   { max: 0, id: 'correct', label: 'Correct', emoji: '🟩' },

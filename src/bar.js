@@ -8,14 +8,15 @@ const BEND = 9; // px the floor gives way under the ball when it's pulled furthe
 const BEND_K = 260; // floor spring: stiffness (a touch springy so it settles back)
 const BEND_D = 2 * Math.sqrt(BEND_K) * 0.55;
 const REACH = 0.55; // × maxH: how quickly the wave sinks as the ball moves away from the floor
-const BASE_HALF = 7; // units visible each side at rest
+const BASE_HALF = 10; // units visible each side at rest
+const IDLE_MS = 30; // with only the sparkles moving, draw about 30 times a second
 // Pointer → number mapping. The pointer's fraction f of the half-width maps
 // to an offset from N of  reach · (K·|f| + (1 − K)·|f|³):  fine control near
-// N, faster toward the edges. `reach` (24) covers the farthest the closest
+// N, faster toward the edges. `reach` (40) covers the farthest the closest
 // prime can ever be (18, at 9569) plus a margin, the same on both sides, so
 // the screen edge gives nothing away. The camera then sits wherever puts that
 // number right under the pointer, while the view widens by BETA per unit.
-const K = 0.5;
+const K = 0.3; // K·reach ≈ 12: one number per step near the centre, as before
 const BETA = 0.42;
 const STIFF = 120;
 const DAMP = 2 * Math.sqrt(STIFF) * 0.95; // just under critical: smooth, no wobble
@@ -124,6 +125,8 @@ export class NumberBar {
     this.tween = null;
     this.raf = 0;
     this.last = 0;
+    this.active = true; // last step had more than the sparkles moving
+    this.dirty = true;
     this.hovered = undefined;
 
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -273,7 +276,8 @@ export class NumberBar {
     return clamp(Math.round(this.w / SPARK_DENSITY), 20, 50);
   }
   get sigma() {
-    return Math.max(1.6, 46 / this.ppu);
+    // the hill's width on screen stays as it was when 7 numbers showed each side
+    return Math.max((1.6 * BASE_HALF) / 7, 46 / this.ppu);
   }
   restFor(n) {
     return this.maxH * 0.14;
@@ -329,6 +333,7 @@ export class NumberBar {
   // ---- simulation --------------------------------------------------------
 
   kick() {
+    this.dirty = true; // something changed: the next frame runs in full
     if (this.raf) return;
     this.last = performance.now();
     this.raf = requestAnimationFrame((t) => this.frame(t));
@@ -336,6 +341,13 @@ export class NumberBar {
 
   frame(t) {
     this.raf = 0;
+    // only the sparkles moving: about 30fps is plenty (they flicker in steps)
+    const since = t - this.last;
+    if (!this.dirty && !this.active && since >= 0 && since < IDLE_MS) {
+      this.raf = requestAnimationFrame((t2) => this.frame(t2));
+      return;
+    }
+    this.dirty = false;
     const dt = clamp((t - this.last) / 1000, 0.001, 1 / 30);
     this.last = t;
     const busy = this.step(dt);
@@ -365,7 +377,8 @@ export class NumberBar {
   }
 
   step(dt) {
-    let busy = false;
+    let busy = false; // anything but the sparkles moving
+    let sparkling = false;
     const R = (this.rect = this.canvas.getBoundingClientRect());
     const free = this.mode === 'idle' && this.engaged && this.enabled;
     const over = !this.enabled && this.mode === 'idle' && this.focus !== null;
@@ -468,7 +481,7 @@ export class NumberBar {
         if (s.dy < 0) s.dy -= 4 * dt; // the ones above the crest drift up slowly
       }
       this.sparks = this.sparks.filter((s) => s.life < s.max);
-      busy = true;
+      sparkling = true;
     }
 
     // the ball, in viewport px: follows the pointer anywhere, but never
@@ -561,7 +574,8 @@ export class NumberBar {
       this.onHover(hv);
     }
 
-    return busy;
+    this.active = busy;
+    return busy || sparkling;
   }
 
   /**
@@ -719,6 +733,8 @@ export class NumberBar {
   }
 
   onUp(e) {
+    // touch only counts as the gesture that allows sound on release
+    sfx.unlock();
     const d = this.down;
     this.down = null;
     if (!d || this.mode === 'drop') return;
