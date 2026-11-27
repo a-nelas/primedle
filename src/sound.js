@@ -1,9 +1,10 @@
 // 8-bit sound effects, synthesized with Web Audio (no files): square-wave
 // blips and a crunchy, bit-crushed noise crash.
 //
-// Browsers only allow sound after a click, tap or key press, so `unlock()`
-// runs on each of those, anywhere on the page; until the first one every
-// effect is silently skipped.
+// The audio context is created as the page loads, so sound starts at once
+// wherever the browser allows autoplay. Where it doesn't, `unlock()` runs on
+// each click, tap or key press anywhere on the page; until the first one
+// every effect is silently skipped.
 
 let ctx = null;
 let out = null;
@@ -22,20 +23,35 @@ export function context() {
   return ready() ? { ctx, out } : null;
 }
 
+const fire = () => {
+  if (ready()) unlockHooks.forEach((fn) => fn());
+};
+
+function create() {
+  if (ctx) return true;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return false;
+  ctx = new AC();
+  out = ctx.createGain();
+  out.gain.value = VOLUME;
+  out.connect(ctx.destination);
+  noise = crunchyNoise(0.5);
+  // however it gets going (autoplay allowed, a gesture, the OS giving audio
+  // back), start what's waiting on it
+  ctx.addEventListener('statechange', fire);
+  return true;
+}
+
 export function unlock() {
-  if (!ctx) {
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    ctx = new AC();
-    out = ctx.createGain();
-    out.gain.value = VOLUME;
-    out.connect(ctx.destination);
-    noise = crunchyNoise(0.5);
-  }
-  const fire = () => unlockHooks.forEach((fn) => fn());
-  if (ctx.state === 'suspended') ctx.resume().then(fire, () => {});
+  if (!create()) return;
+  if (ctx.state !== 'running') ctx.resume().then(fire, () => {});
   else fire();
 }
+
+// Try right away: where the browser allows autoplay (site sound permission,
+// media engagement, autoplay setting) the music starts with the page.
+// Elsewhere this stays suspended until the first gesture below.
+unlock();
 
 // any click, tap or key press anywhere counts (capture: before anything can
 // stop it); mouse counts on press, touch on release

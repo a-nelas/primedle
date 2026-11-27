@@ -8,9 +8,8 @@
 // Chords, one per bar (both halves): Em C G D | Em C D B.
 // Everything but the kick ducks on each beat (the EDM "pump").
 //
-// It starts on the first click, tap or key press anywhere (browsers allow
-// sound only after one),
-// fades out while the tab is hidden, and the speaker button turns it off
+// It starts with the page where the browser allows autoplay, otherwise on
+// the first click, tap or key press anywhere; it fades out while the tab is hidden, and the speaker button turns it off
 // (remembered in this browser).
 
 import { context, onUnlock } from './sound.js';
@@ -258,4 +257,5 @@ export function setOn(on) {
 }
 
 onUnlock(start);
+start(); // in case sound is already running (autoplay allowed)
 document.addEventListener('visibilitychange', () => (document.hidden ? stop() : start()));
